@@ -209,19 +209,44 @@ async function fetchAllProducts(cookieStr, spcCds, feSession) {
 
 function mapProduct(item) {
   if (!item) return null;
-  const imgs = item.images || item.image || [];
-  const imgArr = Array.isArray(imgs) ? imgs : [imgs];
-  const img = (imgArr[0] && imgArr[0].image_url) ||
-    (imgArr[0] && imgArr[0].image_url_list && imgArr[0].image_url_list[0]) ||
-    (typeof imgArr[0] === 'string' ? 'https://down-br.img.susercontent.com/file/' + imgArr[0] : '');
+
+  // Imagem: cover_image (v3 list) ou images[] (v4)
+  let img = '';
+  if (item.cover_image) {
+    img = 'https://down-br.img.susercontent.com/file/' + item.cover_image;
+  } else {
+    const imgs = item.images || item.image || [];
+    const imgArr = Array.isArray(imgs) ? imgs : [imgs];
+    img = (imgArr[0] && imgArr[0].image_url) ||
+      (imgArr[0] && imgArr[0].image_url_list && imgArr[0].image_url_list[0]) ||
+      (typeof imgArr[0] === 'string' ? 'https://down-br.img.susercontent.com/file/' + imgArr[0] : '');
+  }
+
+  // Preco: price_detail.selling_price_min (v3) ou price_info (v4)
+  let price = 0;
+  if (item.price_detail && item.price_detail.selling_price_min) {
+    price = parseFloat(item.price_detail.selling_price_min) || 0;
+  } else if (item.price_info && item.price_info[0] && item.price_info[0].current_price) {
+    price = item.price_info[0].current_price / 100000;
+  } else if (item.price || item.min_price) {
+    price = (item.price || item.min_price) / 100000;
+  }
+
+  // Stock: stock_detail.total_available_stock (v3) ou total_available_stock (v4)
+  const stock = (item.stock_detail && item.stock_detail.total_available_stock) ||
+    item.total_available_stock || item.stock || 0;
+
+  // Vendas: statistics.sold_count (v3) ou sold (v4)
+  const sales = (item.statistics && item.statistics.sold_count) || item.sold || 0;
+
   return {
     id: item.item_id || item.id,
     name: item.name || item.item_name || '',
-    price: (item.price || item.min_price || (item.price_info && item.price_info[0] && item.price_info[0].current_price) || 0) / 100000,
-    stock: item.stock || item.total_available_stock || 0,
+    price,
+    stock,
     image: img,
     status: item.item_status || item.status || 'NORMAL',
-    sales: item.sold || 0
+    sales
   };
 }
 
