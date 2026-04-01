@@ -241,6 +241,24 @@ const server = http.createServer(async (req, res) => {
   const auth = req.headers['authorization'] || '';
   if (auth !== 'Bearer ' + SECRET) { res.writeHead(401); res.end(JSON.stringify({ error: 'Unauthorized' })); return; }
 
+  if (req.method === 'POST' && req.url === '/raw') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { cookies, spc_cds, fe_session } = JSON.parse(body);
+        const proxy = getProxyConfig();
+        const csrf = (cookies.match(/csrftoken=([^;]+)/) || [])[1] || '';
+        const hdrs = makeHeaders(cookies, fe_session || '', csrf);
+        const u = 'https://seller.shopee.com.br/api/v3/opt/mpsku/list/v2/search_product_list?SPC_CDS=' + spc_cds + '&SPC_CDS_VER=2&page_size=2&list_type=live_all&request_attribute=&operation_sort_by=recommend_v2&need_ads=false';
+        const r = await shopeeRequest(u, { method: 'GET', headers: hdrs }, proxy);
+        res.writeHead(200);
+        res.end(r.body);
+      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+    });
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/sync') {
     let body = '';
     req.on('data', chunk => body += chunk);
