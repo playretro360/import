@@ -67,7 +67,10 @@ async function syncWithPuppeteer(cookieStr, spcCds, feSession) {
       return { name, value, domain: '.shopee.com.br', path: '/', httpOnly: false, secure: true, sameSite: 'None' };
     }).filter(Boolean);
 
-    await page.setCookie(...cookieArr);
+    // BD Scraping Browser proíbe sobrescrever alguns cookies próprios
+    const blockedCookies = ['SPC_F','REC_T_ID','SPC_CLIENTID','SC_DFP','_QPWSDCXHZQA','REC7iLP4Q','ca_gen_id'];
+    const safeCookies = cookieArr.filter(c => !blockedCookies.includes(c.name));
+    if (safeCookies.length > 0) await page.setCookie(...safeCookies);
     console.log('[sync] ' + cookieArr.length + ' cookies injetados');
 
     // ── 2. Intercepta respostas da API de produtos ────────────
