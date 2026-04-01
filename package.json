@@ -1,13 +1,13 @@
 {
   "name": "vendry-sync",
-  "version": "1.0.0",
-  "description": "Vendry Sync Server — BD Scraping Browser bridge",
+  "version": "4.0.0",
+  "description": "Vendry Sync Server — Puppeteer + Bright Data",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "puppeteer-core": "^22.0.0"
   },
   "engines": {
     "node": ">=18"
