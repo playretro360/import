@@ -601,80 +601,6 @@ async function syncV10(cookies, feSession, spcCds) {
 // ════════════════════════════════════════════════════════════
 // 🖥️ HTTP SERVER
 // ════════════════════════════════════════════════════════════
-http.createServer(async (req, res) => {
-  const p = url_mod.parse(req.url, true).pathname;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
-  const auth = req.headers['authorization'] || '';
-  if (!auth.startsWith('Bearer ') || auth.slice(7) !== SECRET) {
-    res.writeHead(401);
-    return res.end(JSON.stringify({ error: 'Nao autorizado' }));
-  }
-
-  if (req.method === 'GET' && p === '/health') {
-    const topHeaders = Object.entries(headerScores)
-      .sort((a,b) => b[1].score - a[1].score).slice(0, 3)
-      .map(([k, v]) => ({ key: k.slice(0, 30), score: v.score, wins: v.wins }));
-    const topEndpoints = Object.entries(endpointMemory)
-      .sort((a,b) => b[1].score - a[1].score).slice(0, 5)
-      .map(([n, v]) => ({ name: n, score: v.score, uses: v.uses }));
-    const hourScore = getCurrentHourScore();
-    const recentTypes = recentResults.slice(-10).map(r => r.type);
-    const cbList = Object.entries(breaker).map(([n, b]) => ({ endpoint: n, ok: b.ok, fails: b.fails, wins: b.wins || 0 }));
-
-    res.writeHead(200);
-    return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '10.0.0',
-      proxy: getProxy() ? getProxy().host + ':' + getProxy().port : 'none',
-      endpoints_total: 50,
-      last_sync: lastTime ? new Date(lastTime).toISOString() : null,
-      last_count: lastCount,
-      best_endpoint: bestEp,
-      intelligence: {
-        hour_score: hourScore,
-        recent_results: recentTypes,
-        top_headers: topHeaders,
-        top_endpoints: topEndpoints,
-        adaptive_delay: getAdaptiveDelay(),
-      },
-      circuit_breakers: cbList,
-    }));
-  }
-
-  if (req.method === 'GET' && p === '/intelligence') {
-    res.writeHead(200);
-    return res.end(JSON.stringify({
-      header_scores: headerScores,
-      endpoint_memory: endpointMemory,
-      time_pattern: timePattern.map((h, i) => ({ hour: i, ...h })),
-      recent_results: recentResults.slice(-20),
-    }));
-  }
-
-  if (req.method === 'GET' && p === '/check') {
-    res.writeHead(200);
-    return res.end(JSON.stringify({ ok: true, proxy: !!getProxy(), endpoints: 50, version: '10.0.0', intelligence: true }));
-  }
-
-  if (req.method === 'POST' && p === '/sync') {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', async () => {
-      try {
-        const d = JSON.parse(body);
-        if (!d.cookies || !d.spc_cds) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies e spc_cds obrigatorios' })); }
-        const r = await sync(d.cookies, d.fe_session || '', d.spc_cds);
-        res.writeHead(r.ok ? 200 : r.expired ? 401 : 500);
-        res.end(JSON.stringify(r));
-      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
-    });
-    return;
-  }
-
-  res.writeHead(404);
-  res.end(JSON.stringify({ error: 'Not found' }));
-}).listen(PORT, () => console.log(`[vendry-sync v10] ${PORT} | 50 endpoints | adaptive intelligence ON`))
 // ════════════════════════════════════════════════════════════
 // ⚙️  ENDPOINT GENERATOR ENGINE
 // Multiplica paths × versões × variações automaticamente
@@ -1565,11 +1491,14 @@ http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && p === '/endpoints') {
-    // Lista todos os endpoints gerados para diagnóstico
-    const sc = 'SPC_CDS=diag&SPC_CDS_VER=2';
-    const stats = getStats(sc);
     res.writeHead(200);
-    return res.end(JSON.stringify(stats));
+    return res.end(JSON.stringify({
+      sc_categories: Object.keys(SC_PATHS).length,
+      bu_categories: Object.keys(BU_PATHS).length,
+      sc_paths: Object.fromEntries(Object.entries(SC_PATHS).map(([k,v])=>[k,v.length])),
+      bu_paths: Object.fromEntries(Object.entries(BU_PATHS).map(([k,v])=>[k,v.length])),
+      total_estimate: (Object.values(SC_PATHS).reduce((s,v)=>s+v.length,0) + Object.values(BU_PATHS).reduce((s,v)=>s+v.length,0)) * 5 * 3,
+    }));
   }
 
   const readBody = () => new Promise(resolve => {
@@ -1622,15 +1551,9 @@ http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: 'Not found' }));
 
 }).listen(PORT, () => {
-  // Calcula total de endpoints ao iniciar
-  const sc = 'SPC_CDS=boot&SPC_CDS_VER=2';
-  const stats = getStats(sc);
-  console.log(`\n✅ Vendry Sync Server v13.0 — porta ${PORT}`);
-  console.log(`🎯 ENDPOINTS GERADOS: ${stats.total}`);
-  console.log(`   Seller Center: ${stats.seller_center} (${stats.sc_categories} categorias × 5 versões)`);
-  console.log(`   Buyer API:     ${stats.buyer_api} (${stats.bu_categories} categorias × 5 versões)`);
-  console.log(`   v10 Sync:      50 (preservados)`);
-  console.log(`   UA Pool:       ${UA_ALL.length} user-agents`);
-  console.log(`🔒 Proxy: ${getProxy() ? getProxy().host : 'NAO CONFIGURADO'}`);
-  console.log(`🧠 IA: Adaptive Intelligence Engine ativo\n`);
+  // Startup leve — endpoints gerados sob demanda
+  const proxyInfo = getProxy() ? getProxy().host + ':' + getProxy().port : 'NAO CONFIGURADO';
+  console.log(`✅ Vendry Sync Server v13.0 | porta ${PORT} | proxy: ${proxyInfo}`);
+  console.log(`   SC: ${Object.keys(SC_PATHS).length} categorias | BU: ${Object.keys(BU_PATHS).length} categorias | v10 sync: 50 eps`);
+  console.log(`   UA pool: ${UA_ALL.length} | IA: ON | Pronto!`);
 });
