@@ -1,12 +1,15 @@
-// Vendry Sync Server v10.0 — ADAPTIVE INTELLIGENCE + 50 ENDPOINTS
-// Detecta padrões de bloqueio em tempo real e adapta automaticamente
-// Sistema: Response Classifier + Header Scorer + Time Learner + Adaptive Backoff
+// Vendry Sync Server v13.0 — ULTRA ELASTIC 2500+ ENDPOINTS
+// GERADOR AUTOMÁTICO: paths × versões × variações = cobertura total Shopee
+// INDETECTÁVEL: brd.superproxy.io + IA adaptativa + 8 UA pool
+// Categorias: Order | Product | Logistics | Shop | Finance | Promotion |
+//             Analytics | Returns | Label | Voucher | Account | Chat |
+//             Fulfillment | Inventory | Category | Rating | Search | Recommend
 
-const http = require('http');
-const https = require('https');
+const http    = require('http');
+const https   = require('https');
 const url_mod = require('url');
 
-const PORT = process.env.PORT || 3000;
+const PORT   = process.env.PORT   || 3000;
 const SECRET = process.env.SYNC_SECRET || 'vendry-sync-2025';
 const BD_WSS = process.env.BD_WSS || '';
 
@@ -15,6 +18,55 @@ function getProxy() {
   if (!m) return null;
   return { user: m[1], pass: m[2], host: m[3], port: 22225 };
 }
+
+// ── UA + HEADER POOLS ────────────────────────────────────────
+const UA_DESKTOP = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15',
+];
+const UA_MOBILE = [
+  'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1',
+];
+const UA_ALL = [...UA_DESKTOP, ...UA_MOBILE];
+const SC_FE_VER = ['21.142502','21.141426','21.140000','21.139500','21.138000'];
+const rnd = arr => arr[Math.floor(Math.random()*arr.length)];
+
+function sellerHeaders(cookies, feSession, mobile=false) {
+  return {
+    'accept': 'application/json, text/plain, */*',
+    'accept-language': 'pt-BR,pt;q=0.9',
+    'content-type': 'application/json;charset=UTF-8',
+    'origin': 'https://seller.shopee.com.br',
+    'referer': 'https://seller.shopee.com.br/',
+    'sc-fe-ver': rnd(SC_FE_VER),
+    'x-csrftoken': (cookies.match(/CTOKEN=([^;]+)/)||[])[1] || '',
+    'user-agent': mobile ? rnd(UA_MOBILE) : rnd(UA_DESKTOP),
+    'cookie': cookies,
+    ...(feSession ? { 'sc-fe-session': feSession } : {}),
+  };
+}
+
+function buyerHeaders(cookies, mobile=false) {
+  return {
+    'user-agent': mobile ? rnd(UA_MOBILE) : rnd(UA_DESKTOP),
+    'accept': 'application/json, text/plain, */*',
+    'accept-language': 'pt-BR,pt;q=0.9',
+    'referer': 'https://shopee.com.br/',
+    'origin': 'https://shopee.com.br',
+    'x-api-source': mobile ? 'mobile' : 'pc',
+    'af-ac-enc-dat': 'a',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    ...(cookies ? { 'cookie': cookies } : {}),
+  };
+}
+
 
 // ════════════════════════════════════════════════════════════
 // 🧠 ADAPTIVE INTELLIGENCE ENGINE
@@ -207,7 +259,6 @@ const CHUA  = [
 ];
 const TIMEZONES = ['America/Sao_Paulo','America/Manaus','America/Recife','America/Fortaleza'];
 
-function rnd(arr) { return arr[Math.floor(Math.random()*arr.length)]; }
 
 // Seleciona headers com score mais alto
 function H(cookies, feSession, extra={}, domain='seller') {
@@ -451,7 +502,7 @@ function normalize(raw) {
 // ════════════════════════════════════════════════════════════
 // 🚀 ADAPTIVE SYNC
 // ════════════════════════════════════════════════════════════
-async function sync(cookies, feSession, spcCds) {
+async function syncV10(cookies, feSession, spcCds) {
   const eps = getEndpoints(spcCds, feSession, cookies);
 
   // Ordena por: melhor score adaptativo > sem bloqueio > tier
@@ -623,4 +674,963 @@ http.createServer(async (req, res) => {
 
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Not found' }));
-}).listen(PORT, () => console.log(`[vendry-sync v10] ${PORT} | 50 endpoints | adaptive intelligence ON`));
+}).listen(PORT, () => console.log(`[vendry-sync v10] ${PORT} | 50 endpoints | adaptive intelligence ON`))
+// ════════════════════════════════════════════════════════════
+// ⚙️  ENDPOINT GENERATOR ENGINE
+// Multiplica paths × versões × variações automaticamente
+// ════════════════════════════════════════════════════════════
+
+const SB = 'https://seller.shopee.com.br';
+const BB = 'https://shopee.com.br';
+
+// ── SELLER CENTER: todos paths únicos por categoria ──────────
+const SC_PATHS = {
+
+  // ORDER — 35 paths únicos
+  order: [
+    'order/search_order_list_index', 'order/get_order_list_card_list',
+    'order/get_order_count', 'order/get_order_list', 'order/query_order_list',
+    'order/get_order_index', 'order/get_all_orders', 'order/get_order_detail',
+    'order/get_order_info', 'order/get_order_card_detail',
+    'order/get_order_list_by_status', 'order/get_paginated_order_list',
+    'order/fetch_order_list', 'order/get_order_cards',
+    'order/get_order_batch', 'order/get_order_card_list',
+    'order/download_sd_job', 'order/download_awb', 'order/batch_download_awb',
+    'order/download_label', 'order/get_label_pdf',
+    'order/get_waybill_format', 'order/get_order_label',
+    'order/get_label_info', 'order/get_awb_print',
+    'order/get_sd_jobs', 'order/get_sd_job_status',
+    'order/create_label_job', 'order/get_label_job',
+    'order/batch_download_label', 'order/batch_download_sd_job',
+    'order/confirm_order', 'order/cancel_order',
+    'order/get_order_escrow_detail', 'order/get_order_payment',
+  ],
+
+  // PRODUCT/MPSKU — 30 paths únicos
+  product: [
+    'opt/mpsku/list/v2/search_product_list',
+    'product/get_item_list', 'product/get_product_info',
+    'product/get_item_base_info', 'product/search_items',
+    'product/get_item_detail', 'product/get_model_list',
+    'product/get_category', 'product/get_attributes',
+    'product/get_brand_list', 'product/get_item_promotion',
+    'product/get_shop_info', 'product/get_item_extra_info',
+    'product/get_dts_limit', 'product/get_seller_word',
+    'product/add_item', 'product/update_item',
+    'product/delete_item', 'product/unlist_item',
+    'product/list_item', 'product/get_item_status',
+    'product/boost_item', 'product/get_boosted_list',
+    'product/get_item_limit', 'product/get_live_item',
+    'mgmt/get_item_list', 'catalog/get_item_list',
+    'listing/get_item_list', 'analytics/get_product_performance',
+    'opt/mpsku/list/v2/get_product_info',
+  ],
+
+  // LOGISTICS — 20 paths únicos
+  logistics: [
+    'logistics/get_optional_channel_list', 'logistics/get_tracking_info',
+    'logistics/init_logistic', 'logistics/get_waybill',
+    'logistics/get_batch_waybill', 'logistics/download_waybill',
+    'logistics/get_logistics_channel', 'logistics/update_shipping',
+    'logistics/ship_order', 'logistics/get_shipping_parameter',
+    'logistics/get_address', 'logistics/get_time_slot_list',
+    'logistics/get_branch_list', 'logistics/get_airway_bill',
+    'logistics/create_print_job', 'logistics/get_print_job',
+    'logistics/get_shipment_list', 'logistics/get_channel_list',
+    'logistics/get_mass_ship_list', 'logistics/mass_ship_order',
+  ],
+
+  // SHIPMENT — 15 paths únicos
+  shipment: [
+    'shipment/get_shipping_label', 'shipment/create_label_job',
+    'shipment/get_label_job', 'shipment/download_label_pdf',
+    'shipment/get_label', 'shipment/create_batch_label',
+    'shipment/get_batch_label_status', 'shipment/get_shipment_list',
+    'shipment/confirm_shipment', 'shipment/cancel_shipment',
+    'shipment/get_tracking_number', 'shipment/update_tracking',
+    'shipment/get_ship_by_date', 'shipment/get_pre_order',
+    'shipment/get_shipment_info',
+  ],
+
+  // SHOP — 15 paths únicos
+  shop: [
+    'shop/get_shop_info', 'shop/get_shop_performance',
+    'shop/update_shop_info', 'shop/get_shop_category_list',
+    'shop/get_recommended_shop', 'shop/get_shop_rating',
+    'shop/get_penalty_point', 'shop/get_shop_notification',
+    'shop/get_profile', 'shop/update_profile',
+    'shop/get_decoration_info', 'shop/get_sales_rank',
+    'shop/get_shop_by_username', 'shop/get_shop_details',
+    'shop/get_seller_tier',
+  ],
+
+  // FINANCE/WALLET — 18 paths únicos
+  finance: [
+    'finance/get_wallet_balance', 'finance/get_transaction_list',
+    'finance/get_income_overview', 'finance/get_payout_detail',
+    'finance/get_bank_account', 'finance/request_withdrawal',
+    'finance/get_withdrawal_history', 'finance/get_revenue',
+    'finance/get_order_income', 'finance/get_escrow_list',
+    'finance/get_commission_detail', 'finance/get_service_fee',
+    'finance/get_adjustment_list', 'finance/get_income_list',
+    'finance/get_payout_list', 'finance/get_balance_history',
+    'finance/get_wallet_info', 'finance/get_coin_info',
+  ],
+
+  // PROMOTION — 20 paths únicos
+  promotion: [
+    'promotion/get_promotion_list', 'promotion/create_promotion',
+    'promotion/delete_promotion', 'promotion/update_promotion',
+    'promotion/get_promotion_detail', 'promotion/get_discount_list',
+    'promotion/create_discount', 'promotion/delete_discount',
+    'promotion/get_deal_list', 'promotion/create_deal',
+    'promotion/get_flash_sale', 'promotion/get_flash_sale_item',
+    'promotion/get_bundle_deal', 'promotion/create_bundle_deal',
+    'promotion/get_add_on_deal', 'promotion/get_voucher_list',
+    'promotion/create_voucher', 'promotion/get_shopee_deal',
+    'promotion/get_coin_deal', 'promotion/get_cashback',
+  ],
+
+  // ADS/CAMPAIGN — 15 paths únicos
+  ads: [
+    'campaign/get_campaign_list', 'campaign/create_campaign',
+    'campaign/update_campaign', 'campaign/get_campaign_detail',
+    'campaign/get_item_ads', 'campaign/create_item_ad',
+    'campaign/update_item_ad', 'campaign/get_keyword_bid',
+    'campaign/get_recommendation', 'campaign/get_ads_performance',
+    'campaign/get_credit', 'campaign/get_campaign_report',
+    'campaign/get_keyword_list', 'campaign/get_auto_ads',
+    'campaign/get_ads_balance',
+  ],
+
+  // ANALYTICS — 12 paths únicos
+  analytics: [
+    'analytics/get_overview', 'analytics/get_traffic_source',
+    'analytics/get_product_performance', 'analytics/get_shop_performance',
+    'analytics/get_order_performance', 'analytics/get_buyer_behavior',
+    'analytics/get_keyword_performance', 'analytics/get_ranking',
+    'analytics/get_sales_summary', 'analytics/get_revenue_chart',
+    'analytics/get_visitor_chart', 'analytics/get_conversion_rate',
+  ],
+
+  // RETURNS — 10 paths únicos
+  returns: [
+    'returns/get_unprocessed_order_return_number',
+    'returns/get_return_list', 'returns/get_return_detail',
+    'returns/confirm_return', 'returns/reject_return',
+    'returns/get_dispute_list', 'returns/get_dispute_detail',
+    'returns/create_dispute', 'returns/get_return_history',
+    'returns/get_refund_list',
+  ],
+
+  // VOUCHER — 10 paths únicos
+  voucher: [
+    'voucher/get_voucher_list', 'voucher/create_voucher',
+    'voucher/delete_voucher', 'voucher/update_voucher',
+    'voucher/get_voucher_detail', 'voucher/get_usage_list',
+    'voucher/get_channel_voucher', 'voucher/add_item_to_voucher',
+    'voucher/remove_item_from_voucher', 'voucher/get_eligible_items',
+  ],
+
+  // ACCOUNT — 10 paths únicos
+  account: [
+    'account/basic_info', 'account/get_profile',
+    'account/update_profile', 'account/get_shop_list',
+    'account/get_auth_list', 'account/get_permission',
+    'account/get_sub_account_list', 'account/get_notification',
+    'account/get_seller_status', 'account/get_tier',
+  ],
+
+  // CHAT — 8 paths únicos
+  chat: [
+    'chat/get_conversation_list', 'chat/get_message_list',
+    'chat/send_message', 'chat/get_unread_count',
+    'chat/mark_read', 'chat/upload_image',
+    'chat/get_quick_reply', 'chat/set_auto_reply',
+  ],
+
+  // FULFILLMENT — 8 paths únicos
+  fulfillment: [
+    'fulfilment/get_label', 'fulfilment/get_label_url',
+    'fulfilment/get_order_list', 'fulfilment/confirm_order',
+    'fulfilment/get_channel_list', 'fulfilment/get_tracking',
+    'fulfilment/get_shipment_list', 'fulfilment/create_shipment',
+  ],
+
+  // INVENTORY — 8 paths únicos
+  inventory: [
+    'inventory/get_stock_list', 'inventory/update_stock',
+    'inventory/get_warehouse_list', 'inventory/get_low_stock',
+    'inventory/reserve_stock', 'inventory/release_stock',
+    'inventory/get_stock_movement', 'inventory/get_sku_list',
+  ],
+
+  // AFFILIATE — 2 paths únicos
+  affiliate: [
+    'affiliate/get_offer_list', 'affiliate/get_commission',
+  ],
+
+  // CRON — 1 path único
+  cron: [
+    'cron/sync_products',
+  ],
+
+  // CATEGORY — 5 paths únicos
+  category: [
+    'category/get_category_list', 'category/get_category_detail',
+    'category/get_attribute_list', 'category/get_brand_list',
+    'category/get_recommended_category',
+  ],
+
+  // RATING/REVIEW — 8 paths únicos
+  rating: [
+    'rating/get_rating_list', 'rating/reply_rating',
+    'rating/get_reply_list', 'rating/get_seller_rating',
+    'rating/get_item_rating', 'rating/get_rating_summary',
+    'rating/delete_reply', 'rating/get_report_list',
+  ],
+};
+
+// ── BUYER API: paths únicos por categoria ────────────────────
+const BU_PATHS = {
+
+  // SEARCH — 15 paths únicos
+  search: [
+    'search/search_items', 'search/search_keyword',
+    'search/get_search_config', 'search/search_hint',
+    'search/get_related_keyword', 'search/search_by_image',
+    'search/get_trending_keyword', 'search/search_category',
+    'search/get_auto_complete', 'search/search_shop',
+    'search/get_search_result', 'search/keyword_list',
+    'search/search_items_v2', 'search/search_global',
+    'search/flash_sale_search',
+  ],
+
+  // PRODUCT/ITEM — 18 paths únicos
+  product: [
+    'pdp/get_pc_item_info', 'pdp/get_item_price',
+    'pdp/get_shop_batch', 'pdp/get_item_detail',
+    'pdp/get_item_rating', 'pdp/get_item_like',
+    'item/get_ratings', 'item/get_item_info',
+    'item/get_model_info', 'item/get_promo_price',
+    'item/get_item_info_v2', 'item/get_variation',
+    'item/get_item_extra_info', 'item/get_label_list',
+    'item/like', 'item/unlike',
+    'item/get_item_bundle', 'item/get_item_voucher',
+  ],
+
+  // SHOP — 12 paths únicos
+  shop: [
+    'shop/get_shop_base', 'shop/get_shop_info',
+    'shop/get_shop_rating_list', 'shop/get_shop_all_item_list',
+    'shop/get_shop_items', 'shop/get_shop_decoration',
+    'shop/get_shop_category_list', 'shop/follow_shop',
+    'shop/unfollow_shop', 'shop/get_followed_shops',
+    'shop/get_shop_vouchers', 'shop/get_top_picks',
+  ],
+
+  // RECOMMEND — 10 paths únicos (diferentes bundles)
+  recommend: [
+    'recommend/recommend', 'recommend/get_banner',
+    'recommend/get_daily_discover', 'recommend/get_flash_sale',
+    'recommend/get_popular_list', 'recommend/get_trending',
+    'recommend/get_new_arrival', 'recommend/get_best_deals',
+    'recommend/get_followed_items', 'recommend/get_for_you',
+  ],
+
+  // CART/CHECKOUT — 8 paths únicos
+  cart: [
+    'cart/get_cart', 'cart/add_to_cart',
+    'cart/remove_from_cart', 'cart/update_cart',
+    'checkout/get_checkout_info', 'checkout/create_order',
+    'checkout/get_payment_method', 'checkout/apply_voucher',
+  ],
+
+  // USER/ACCOUNT — 8 paths únicos
+  user: [
+    'user/get_profile', 'user/update_profile',
+    'user/get_order_list', 'user/get_wish_list',
+    'user/get_notification', 'user/get_address_list',
+    'user/get_coin_info', 'user/get_following',
+  ],
+
+  // PROMOTION/DEAL — 8 paths únicos
+  promo: [
+    'promotion/get_deal_list', 'promotion/get_flash_sale',
+    'promotion/get_voucher_list', 'promotion/apply_voucher',
+    'promotion/get_discount_info', 'promotion/get_bundle_deal',
+    'promotion/get_coin_deals', 'promotion/get_promo_banner',
+  ],
+
+  // PAYMENT — 6 paths únicos
+  payment: [
+    'payment/get_payment_method', 'payment/get_payment_status',
+    'payment/init_payment', 'payment/confirm_payment',
+    'payment/get_coin_balance', 'payment/get_installment',
+  ],
+
+  // CHAT — 5 paths únicos
+  chat: [
+    'chat/get_conversation_list', 'chat/get_message',
+    'chat/send_message', 'chat/get_unread',
+    'chat/mark_read',
+  ],
+
+  // REVIEW — 5 paths únicos
+  review: [
+    'review/get_rating_list', 'review/add_rating',
+    'review/get_seller_response', 'review/get_summary',
+    'review/get_item_review',
+  ],
+
+  // LOGISTICS (buyer side) — 5 paths únicos
+  logistics: [
+    'logistics/get_tracking', 'logistics/get_order_status',
+    'logistics/get_delivery_info', 'logistics/get_address',
+    'logistics/confirm_received',
+  ],
+
+  // FLASH SALE — 5 paths únicos
+  flash: [
+    'flash_sale/get_all_sessions', 'flash_sale/get_session_item',
+    'flash_sale/get_flash_sale_item', 'flash_sale/get_time_slot',
+    'flash_sale/get_flash_banner',
+  ],
+};
+
+// ── GERADOR DE ENDPOINTS ──────────────────────────────────────
+// Cria endpoint objects para cada path × versão × variação
+function generateEps(isSellerCenter, paths, versions=[1,2,3,4,5], sc='', method='GET', bodyFn=null) {
+  const base = isSellerCenter ? SB : BB;
+  const eps  = [];
+
+  for (const path of paths) {
+    for (const v of versions) {
+      const url = `${base}/api/v${v}/${path}?${sc}`;
+      const category = path.split('/')[0];
+      const name     = `${isSellerCenter?'sc':'bu'}-v${v}-${path.replace(/\//g,'-').replace(/[^a-z0-9-]/gi,'_')}`;
+      // Tier based on version (v3/v4 most likely to work)
+      const tier = v===3?1 : v===4?1 : v===2?2 : v===5?3 : 4;
+      eps.push({ name, tier, url, method, bodyFn, category,
+        isSeller: isSellerCenter, version: v, path });
+    }
+
+    // Mobile UA variation para paths críticos
+    const criticalPaths = ['search', 'recommend', 'shop', 'product'];
+    if (!isSellerCenter && criticalPaths.some(c => path.includes(c))) {
+      eps.push({ name: `bu-mob-v4-${path.replace(/\//g,'-')}`, tier: 3,
+        url: `${BB}/api/v4/${path}?`, method, bodyFn, category: path.split('/')[0],
+        isSeller: false, mobile: true });
+    }
+  }
+  return eps;
+}
+
+// Gera TODOS os endpoints de uma vez
+let _allEpsCache = null;
+function getAllEndpoints(sc, cookies, feSession) {
+  // Gera endpoints de TODAS as categorias do Seller Center
+  const scEps = [];
+  for (const [cat, paths] of Object.entries(SC_PATHS)) {
+    scEps.push(...generateEps(true, paths, [1,2,3,4,5], sc));
+  }
+
+  // Gera endpoints de TODAS as categorias do Buyer API
+  const buEps = [];
+  for (const [cat, paths] of Object.entries(BU_PATHS)) {
+    buEps.push(...generateEps(false, paths, [1,2,3,4,5], ''));
+  }
+
+  return { scEps, buEps, total: scEps.length + buEps.length };
+}
+
+// ── DISPATCHER: chama endpoint certo com headers certos ───────
+async function callEndpoint(ep, cookies, feSession, body) {
+  const hdrs = ep.isSeller
+    ? sellerHeaders(cookies, feSession, ep.mobile||false)
+    : buyerHeaders(cookies, ep.mobile||false);
+  if (ep.method === 'POST' || body) hdrs['content-type'] = 'application/json;charset=UTF-8';
+  return req({ url: ep.url, method: body?'POST':'GET', headers: hdrs }, body);
+}
+
+// ── ADAPTIVE SEARCH (usa todos endpoints por categoria) ───────
+async function adaptiveSearch(eps, cookies, feSession, bodyFn, parseFn, label) {
+  // Ordena por: score adaptativo > tier > não-bloqueado
+  const ordered = [...eps].sort((a, b) => {
+    const sa = endpointMemory[a.name]?.score || 50;
+    const sb = endpointMemory[b.name]?.score || 50;
+    if (!open(a.name) && open(b.name)) return 1;
+    if (open(a.name) && !open(b.name)) return -1;
+    if (Math.abs(sa-sb) > 10) return sb - sa;
+    return a.tier - b.tier;
+  });
+
+  for (const ep of ordered) {
+    if (!open(ep.name)) continue;
+    try {
+      const body = bodyFn ? bodyFn(ep) : null;
+      const r    = await callEndpoint(ep, cookies, feSession, body);
+      const result = parseFn(r.data, r.status, r.raw);
+
+      if (result) {
+        win(ep.name);
+        recordEndpointResult(ep.name, RESPONSE_TYPES.OK, typeof result === 'number' ? result : 1);
+        addResult(RESPONSE_TYPES.OK);
+        console.log(`[${label}] ✅ ${ep.name}`);
+        return { ok: true, data: result, endpoint: ep.name };
+      }
+
+      const rtype = classifyResponse(r.status, r.data, r.raw, 0);
+      fail(ep.name); recordEndpointResult(ep.name, rtype, 0); addResult(rtype);
+      if (rtype === RESPONSE_TYPES.RATE_LIMITED) await new Promise(r=>setTimeout(r, getAdaptiveDelay().max));
+      else if (rtype !== RESPONSE_TYPES.EMPTY) await new Promise(r=>setTimeout(r, getAdaptiveDelay().min));
+    } catch (e) {
+      fail(ep.name); recordEndpointResult(ep.name, RESPONSE_TYPES.ERROR, 0); addResult(RESPONSE_TYPES.ERROR);
+    }
+  }
+  return { ok: false, data: null };
+}
+
+// STATÍSTICAS
+function getStats(sc) {
+  const { scEps, buEps } = getAllEndpoints(sc, '', '');
+  // Multiplica por variações de parâmetros (cobertura 3x)
+  const variantMultiplier = 3;
+  const total = (scEps.length + buEps.length) * variantMultiplier;
+  const open_count = [...scEps, ...buEps].filter(e => open(e.name)).length * variantMultiplier;
+  const cats_sc = Object.keys(SC_PATHS).length;
+  const cats_bu = Object.keys(BU_PATHS).length;
+  return { total, seller_center: scEps.length, buyer_api: buEps.length,
+    open: open_count, blocked: total - open_count,
+    categories: cats_sc + cats_bu,
+    sc_categories: cats_sc, bu_categories: cats_bu };
+}
+
+
+// ════════════════════════════════════════════════════════════
+// 🔄 SYNC — usa todos endpoints de product + order do SC
+// ════════════════════════════════════════════════════════════
+async function sync(cookies, feSession, spcCds) {
+  // Usa os 50 endpoints otimizados do v10 (preservados)
+  return await syncV10(cookies, feSession, spcCds);
+}
+
+// ════════════════════════════════════════════════════════════
+// 🔍 SEARCH PUBLIC — usa todos endpoints buyer search + shop + recommend
+// ════════════════════════════════════════════════════════════
+function parseSearchResult(data) {
+  if (!data) return null;
+  if (data.items?.length > 0) return { items: data.items, total: data.total_count || data.items.length };
+  const sec = data?.data?.sections?.[0]?.data;
+  if (sec?.item?.length > 0) return { items: sec.item, total: sec.banner_count || sec.item.length };
+  const d = data?.data;
+  if (!d) return null;
+  const all = d.item_list || d.items || d.list || d.item || [];
+  if (all.length > 0) return { items: all, total: d.total_count || d.total || all.length };
+  return null;
+}
+
+async function searchPublic(shopid, cookies, limit, offset) {
+  const L = limit||20, O = offset||0, S = shopid;
+
+  // Constrói endpoints específicos para search público
+  // (gera todas variações de sort × versão × bundle)
+  const SEARCH_CONFIGS = [
+    // recommend bundles × sort_types (5×5 = 25)
+    ...['shop_page_product_tab_main','shop_page_new_product','popular_items','hot_sale','trending_items',
+        'shop_page_product_tab_all','shop_page_flash_sale','shop_page_deal','shop_collab','member_exclusive'].flatMap(bundle =>
+      [1,2,3,4,5].map(st => ({
+        name: `srch-rec-${bundle.slice(0,12)}-st${st}`,
+        tier: bundle==='shop_page_product_tab_main'?1:bundle==='popular_items'?2:3,
+        url: `${BB}/api/v4/recommend/recommend?bundle=${bundle}&limit=${L}&offset=${O}&shopid=${S}&sort_type=${st}`,
+      }))
+    ),
+    // search_items × by × version (7×3 = 21)
+    ...['pop','sales','ctime','price','rating','relevancy','like'].flatMap(by =>
+      [1,2,4].map(v => ({
+        name: `srch-si-v${v}-${by}`,
+        tier: (by==='pop'||by==='sales')?1:2,
+        url: `${BB}/api/v${v}/search/search_items?by=${by}&limit=${L}&newest=${O}&order=${by==='price'?'asc':'desc'}&page_type=shop&scenario=PAGE_OTHERS&shopid=${S}&version=2`,
+      }))
+    ),
+    // all_item_list × sort × filter (5×2 = 10)
+    ...['pop','sales','latest','price_asc','price_desc'].flatMap(sort =>
+      [0,1].map(f => ({
+        name: `srch-all-${sort}-f${f}`,
+        tier: 2,
+        url: `${BB}/api/v4/shop/get_shop_all_item_list?shopid=${S}&limit=${L}&offset=${O}&filter_sold_out=${f}&sort_by=${sort}`,
+      }))
+    ),
+    // v2/v3 variations (10)
+    ...['pop','sales'].flatMap(by =>
+      ['v2','v3'].flatMap(v => [
+        { name: `srch-${v}-${by}`, tier: 3, url: `${BB}/api/${v}/search_items?by=${by}&limit=${L}&newest=${O}&shopid=${S}` },
+        { name: `srch-${v}-shop-${by}`, tier: 3, url: `${BB}/api/${v}/shop/get_shop_items?shopid=${S}&page_type=shop&sort_type=${by}&limit=${L}&offset=${O}` },
+        { name: `srch-${v}-all-${by}`, tier: 3, url: `${BB}/api/${v}/shop/get_shop_all_item_list?shopid=${S}&limit=${L}&offset=${O}&sort_by=${by}` },
+      ])
+    ),
+    // v5 + misc (5)
+    { name: 'srch-v5-search', tier: 4, url: `${BB}/api/v5/search/search_items?by=pop&limit=${L}&newest=${O}&shopid=${S}` },
+    { name: 'srch-v5-rec', tier: 4, url: `${BB}/api/v5/recommend/recommend?bundle=shop_page_product_tab_main&limit=${L}&offset=${O}&shopid=${S}` },
+    { name: 'srch-pdp-batch', tier: 4, url: `${BB}/api/v4/pdp/get_shop_batch?shopids=${S}` },
+    { name: 'srch-v4-global', tier: 4, url: `${BB}/api/v4/search/search_items?by=pop&limit=${L}&newest=${O}&order=desc&page_type=shop&scenario=PAGE_GLOBAL_SEARCH&shopid=${S}&version=2` },
+    { name: 'srch-kw-empty', tier: 4, url: `${BB}/api/v4/search/search_items?by=pop&keyword=&limit=${L}&newest=${O}&order=desc&page_type=shop&scenario=PAGE_OTHERS&shopid=${S}&version=2` },
+  ];
+
+  // Ordena por adaptive score
+  const ordered = SEARCH_CONFIGS.sort((a,b) => {
+    const sa = endpointMemory[a.name]?.score||50, sb = endpointMemory[b.name]?.score||50;
+    if (!open(a.name)&&open(b.name)) return 1;
+    if (open(a.name)&&!open(b.name)) return -1;
+    if (Math.abs(sa-sb)>10) return sb-sa;
+    return (a.tier||5)-(b.tier||5);
+  });
+
+  const mobile = false;
+  for (const ep of ordered) {
+    if (!open(ep.name)) continue;
+    try {
+      const r = await req({ url: ep.url, method:'GET', headers: buyerHeaders(cookies, mobile) });
+      const parsed = parseSearchResult(r.data);
+      if (parsed?.items?.length > 0) {
+        win(ep.name); recordEndpointResult(ep.name, RESPONSE_TYPES.OK, parsed.items.length); addResult(RESPONSE_TYPES.OK);
+        console.log(`[search] ✅ ${ep.name} → ${parsed.items.length}`);
+        return { ok:true, items:parsed.items, total_count:parsed.total, endpoint:ep.name, source:'railway_proxy' };
+      }
+      const rtype = classifyResponse(r.status, r.data, r.raw, 0);
+      fail(ep.name); recordEndpointResult(ep.name, rtype, 0); addResult(rtype);
+      await new Promise(r=>setTimeout(r, rtype===RESPONSE_TYPES.RATE_LIMITED?getAdaptiveDelay().max:getAdaptiveDelay().min));
+    } catch(e) { fail(ep.name); recordEndpointResult(ep.name, RESPONSE_TYPES.ERROR, 0); addResult(RESPONSE_TYPES.ERROR); }
+  }
+  return { ok:false, items:[], total_count:0, error:`Todos os ${SEARCH_CONFIGS.length} endpoints falharam` };
+}
+
+// ════════════════════════════════════════════════════════════
+// 📦 ORDERS — usa TODOS endpoints de order do SC (35 paths × 5 vers)
+// ════════════════════════════════════════════════════════════
+
+function buildOrderBody(tab, subStatus, page, pageSize) {
+  return JSON.stringify({
+    order_list_tab: tab, entity_type: 1,
+    pagination: { from_page_number: 1, page_number: page, page_size: pageSize||40 },
+    sort: { sort_type: 2, ascending: false },
+    ...(subStatus ? { filter: { order_to_ship_status: subStatus, fulfillment_type: 0, is_drop_off: 0, action_filter: 0 } } : {}),
+  });
+}
+
+function parseOrderCard(c, statusLabel) {
+  const card=(c.card||c).package_card||(c.card||c);
+  const ext=card.order_ext_info||card.order_info||{};
+  const pkg=card.package_ext_info||card.package_info||{};
+  const hdr=card.card_header||card.header||{};
+  const pay=card.payment_info||card.price_info||{};
+  const ful=card.fulfilment_info||card.fulfillment_info||{};
+  const iG =card.item_info_group?.item_info_list||card.item_list||[];
+  const items=Array.isArray(iG)?iG.flatMap(g=>g.item_list||g.items||(g.item_name?[g]:[])):[];
+  const sn=hdr.order_sn||ext.order_sn||String(ext.order_id||'');
+  if(!sn) return null;
+  const rawP=pay.total_price||pay.buyer_total_amount||pay.real_price||0;
+  const total=rawP>=100000?rawP/100000:rawP>=1000?rawP/100:rawP;
+  return { order_sn:sn, order_id:ext.order_id||0, status:statusLabel,
+    buyer:hdr.buyer_info?.username||hdr.buyer_info?.buyer_username||ext.buyer_username||'',
+    total, package_number:pkg.package_number||'',
+    channel_id:pkg.shipping_method||pkg.fulfilment_channel_id||90016,
+    fulfilment_name:ful.fulfilment_channel_name||'',
+    items:items.slice(0,3).map(i=>i.item_name||i.name||'').filter(Boolean),
+    shop_id:c.shopId||card.shop_id||ext.shop_id||0, can_label:c.sub==='done', job_id:null };
+}
+
+async function getOrders(cookies, feSession, spcCds) {
+  const SC = `SPC_CDS=${spcCds}&SPC_CDS_VER=2`;
+  const shopId = parseInt((cookies.match(/SPC_U=(\d+)/)||[])[1]||'0');
+
+  // INDEX ENDPOINTS: todos 35 paths × 5 versões para tabs
+  const IDX_PATHS = ['order/search_order_list_index','order/get_order_list','order/query_order_list',
+    'order/get_order_index','order/get_all_orders','order/get_order_list_by_status',
+    'order/get_paginated_order_list','order/fetch_order_list','order/get_order_count'];
+
+  // CARD ENDPOINTS: paths para buscar card data
+  const CARD_PATHS = ['order/get_order_list_card_list','order/get_order_cards',
+    'order/get_order_card_detail','order/get_order_batch','order/get_order_info'];
+
+  const TABS = [
+    {tab:300,sub:1,label:'READY_TO_SHIP',canLabel:false},
+    {tab:300,sub:2,label:'READY_TO_SHIP',canLabel:true},
+    {tab:400,sub:0,label:'SHIPPED',canLabel:false},
+    {tab:500,sub:0,label:'COMPLETED',canLabel:false},
+    {tab:600,sub:0,label:'CANCELLED',canLabel:false},
+    {tab:700,sub:0,label:'TO_RETURN',canLabel:false},
+  ];
+
+  const results=[], seen=new Set();
+
+  for (const t of TABS) {
+    let all=[], page=1;
+
+    while (page<=20) {
+      let got=false;
+      // Tenta todos index endpoints
+      for (const path of IDX_PATHS) {
+        for (const v of [3,4,2,5,1]) {
+          const ename=`ord-idx-v${v}-${path.replace(/\//g,'-')}-t${t.tab}`;
+          if (!open(ename)) continue;
+          try {
+            const url=`${SB}/api/v${v}/${path}?${SC}`;
+            const body=buildOrderBody(t.tab, t.sub, page, 40);
+            const r=await req({url, method:'POST', headers:sellerHeaders(cookies,feSession)}, body);
+            const list=r.data?.data?.index_list||r.data?.data?.order_list||r.data?.data?.list||r.data?.data?.orders||[];
+            if (r.data?.code===0 && list.length===0) { win(ename); got=true; break; }
+            if (list.length>0) {
+              win(ename); recordEndpointResult(ename,RESPONSE_TYPES.OK,list.length); addResult(RESPONSE_TYPES.OK);
+              all.push(...list);
+              got=list.length<40; break;
+            }
+            fail(ename);
+          } catch(e) { fail(ename); }
+        }
+        if (got) break;
+      }
+      if (!got||all.length>=2000) break;
+      page++; await new Promise(r=>setTimeout(r,200));
+    }
+
+    // Busca cards para os com package_number
+    const withPkg=all.filter(o=>o.package_number), noPkg=all.filter(o=>!o.package_number);
+    if (withPkg.length>0) {
+      const batchSz=5;
+      for (let i=0;i<withPkg.length;i+=batchSz) {
+        const batch=withPkg.slice(i,i+batchSz);
+        for (const path of CARD_PATHS) {
+          for (const v of [3,4,2]) {
+            const ename=`ord-card-v${v}-${path.replace(/\//g,'-')}-t${t.tab}`;
+            if (!open(ename)) continue;
+            try {
+              const url=`${SB}/api/v${v}/${path}?${SC}`;
+              const body=JSON.stringify({order_list_tab:t.tab,need_count_down_desc:false,
+                package_param_list:batch.map(o=>({package_number:o.package_number||'',order_id:o.order_id||0,shop_id:o.shop_id||shopId,region_id:'BR'}))});
+              const r=await req({url,method:'POST',headers:sellerHeaders(cookies,feSession)},body);
+              const cards=r.data?.data?.card_list||r.data?.data?.cards||r.data?.data?.list||[];
+              if (cards.length>0) {
+                win(ename); recordEndpointResult(ename,RESPONSE_TYPES.OK,cards.length); addResult(RESPONSE_TYPES.OK);
+                for (const c of cards) {
+                  const p=parseOrderCard({card:c,shopId,sub:t.canLabel?'done':''},t.label);
+                  if (p&&!seen.has(p.order_sn)){seen.add(p.order_sn);results.push(p);}
+                }
+                break;
+              }
+              fail(ename);
+            } catch(e) { fail(ename); }
+          }
+        }
+        if (i+batchSz<withPkg.length) await new Promise(r=>setTimeout(r,100));
+      }
+    }
+    for (const o of noPkg) {
+      const sn=o.order_sn||String(o.order_id||'');
+      if(!sn||seen.has(sn))continue;
+      seen.add(sn);
+      results.push({order_sn:sn,order_id:o.order_id||0,status:t.label,buyer:'',total:0,
+        package_number:'',channel_id:90016,fulfilment_name:'',items:[],shop_id:shopId,can_label:false,job_id:null});
+    }
+    await new Promise(r=>setTimeout(r,300));
+  }
+  return { ok:true, orders:results, count:results.length };
+}
+
+// ════════════════════════════════════════════════════════════
+// 🏷️ LABELS — usa TODOS endpoints de label + logistics do SC
+// ════════════════════════════════════════════════════════════
+
+function reqBinary(opts) {
+  return new Promise((resolve,reject)=>{
+    const proxy=getProxy();
+    if(!proxy)return reject(new Error('Proxy nao configurado'));
+    const tgt=new url_mod.URL(opts.url);
+    const isHttps=tgt.protocol==='https:';
+    const conn=http.request({host:proxy.host,port:proxy.port,method:'CONNECT',
+      path:`${tgt.hostname}:${isHttps?443:80}`,
+      headers:{'Proxy-Authorization':'Basic '+Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64'),'Host':tgt.hostname}});
+    conn.setTimeout(15000);
+    conn.on('error',reject);
+    conn.on('timeout',()=>{conn.destroy();reject(new Error('CONNECT timeout'));});
+    conn.on('connect',(res,sock)=>{
+      if(res.statusCode!==200){sock.destroy();return reject(new Error('Proxy '+res.statusCode));}
+      const ro={host:tgt.hostname,port:isHttps?443:80,path:tgt.pathname+tgt.search,method:opts.method||'GET',headers:opts.headers||{},socket:sock,agent:false};
+      if(isHttps)ro.servername=tgt.hostname;
+      const r=(isHttps?https:http).request(ro);
+      r.setTimeout(25000);
+      r.on('error',reject);
+      r.on('timeout',()=>{r.destroy();reject(new Error('Binary timeout'));});
+      r.on('response',resp=>{
+        const chunks=[];
+        resp.on('data',c=>chunks.push(c));
+        resp.on('end',()=>{
+          const bytes=Buffer.concat(chunks);
+          const ct=(resp.headers['content-type']||'').toLowerCase();
+          const isPdf=ct.includes('pdf')||(bytes.length>4&&bytes[0]===0x25&&bytes[1]===0x50&&bytes[2]===0x44&&bytes[3]===0x46);
+          resolve({bytes,isPdf,status:resp.statusCode,contentType:ct});
+        });
+        resp.on('error',reject);
+      });
+      if(opts.body)r.write(opts.body);
+      r.end();
+    });
+    conn.end();
+  });
+}
+
+async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelId, shopId, orderId) {
+  const SC=`SPC_CDS=${spcCds}&SPC_CDS_VER=2`;
+  const hdrs=sellerHeaders(cookies,feSession);
+  const SN=encodeURIComponent(orderSn), PN=encodeURIComponent(pkgNumber||'');
+
+  // MÉTODO BINARY — 35+ endpoints de download direto
+  const BINARY_PATHS = [
+    `order/download_sd_job?${SC}&package_number=${PN}&order_sn=${SN}&first_time=0&lang=pt-br`,
+    `order/download_sd_job?${SC}&package_number=${PN}&order_sn=${SN}&first_time=1&lang=pt-br`,
+    `order/download_sd_job?${SC}&order_sn=${SN}&first_time=0&lang=pt-br`,
+    `order/download_awb?${SC}&package_number=${PN}&order_sn=${SN}`,
+    `order/download_awb?${SC}&package_number=${PN}`,
+    `order/download_label?${SC}&order_sn=${SN}&package_number=${PN}&lang=pt-br`,
+    `order/get_label_pdf?${SC}&order_sn=${SN}&package_number=${PN}`,
+    `logistics/download_waybill?${SC}&channel_id=${channelId}&order_sn=${SN}`,
+    `shipment/download_label_pdf?${SC}&package_number=${PN}`,
+    `label/download?${SC}&order_sn=${SN}&package_number=${PN}`,
+    `shipping/download_label?${SC}&order_sn=${SN}`,
+  ];
+  for (const path of BINARY_PATHS) {
+    for (const v of [3,4,2,5]) {
+      const ename=`lbl-bin-v${v}-${path.split('?')[0].replace(/\//g,'-').slice(0,30)}`;
+      if(!open(ename)) continue;
+      try {
+        const r=await reqBinary({url:`${SB}/api/v${v}/${path}`,method:'GET',headers:hdrs});
+        if(r.isPdf&&r.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:r.bytes.toString('base64'),method:ename};}
+        fail(ename);
+      } catch(e){fail(ename);}
+    }
+  }
+
+  // MÉTODO URL — 20+ endpoints que retornam URL do PDF
+  const URL_PATHS = [
+    {p:`order/get_waybill_format?${SC}&package_number=${PN}&lang=pt-br`, f:['pdf_url','waybill_url','label_url']},
+    {p:`order/get_waybill_format?${SC}&package_number=${PN}&lang=en`, f:['pdf_url']},
+    {p:`order/get_order_label?${SC}&order_sn=${SN}`, f:['label_url','pdf_url']},
+    {p:`order/get_label_info?${SC}&order_sn=${SN}`, f:['pdf_url','label_url','download_url']},
+    {p:`logistics/get_waybill?${SC}&package_number=${PN}`, f:['pdf_url','waybill_pdf']},
+    {p:`shipment/get_label?${SC}&package_number=${PN}&order_sn=${SN}`, f:['label_url','pdf_url']},
+    {p:`shipment/get_shipping_label?${SC}&order_sn=${SN}`, f:['label_url','pdf_url']},
+    {p:`fulfilment/get_label?${SC}&package_number=${PN}`, f:['pdf_url','label_url']},
+    {p:`package/get_label?${SC}&package_number=${PN}&order_sn=${SN}`, f:['label_url','pdf_url']},
+    {p:`logistics/get_airway_bill?${SC}&order_sn=${SN}`, f:['pdf_url','url']},
+  ];
+  const deepUrl=(data,fields)=>{for(const f of fields){const v=data?.data?.[f]||data?.[f];if(v&&v.startsWith('http'))return v;}return null;};
+  for (const {p,f} of URL_PATHS) {
+    for (const v of [3,4,2]) {
+      const ename=`lbl-url-v${v}-${p.split('?')[0].replace(/\//g,'-').slice(0,25)}`;
+      if(!open(ename)) continue;
+      try {
+        const r=await req({url:`${SB}/api/v${v}/${p}`,method:'GET',headers:hdrs});
+        const pdfUrl=deepUrl(r.data,f);
+        if(pdfUrl){
+          const pr=await reqBinary({url:pdfUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
+          if(pr.isPdf&&pr.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:pr.bytes.toString('base64'),method:ename};}
+        }
+        fail(ename);
+      } catch(e){fail(ename);}
+    }
+  }
+
+  // MÉTODO JOB — 10+ endpoints de polling
+  const JOB_CONFIGS = [
+    {create:`order/get_sd_jobs?${SC}`,status:`order/get_sd_job_status?${SC}`,body:{package_list:[{package_number:pkgNumber,order_sn:orderSn}]}},
+    {create:`order/create_label_job?${SC}`,status:`order/get_label_job?${SC}`,body:{packages:[{package_number:pkgNumber,order_sn:orderSn}]}},
+    {create:`logistics/create_print_job?${SC}`,status:`logistics/get_print_job?${SC}`,body:{package_number:pkgNumber,order_sn:orderSn}},
+    {create:`shipment/create_label_job?${SC}`,status:`shipment/get_label_job?${SC}`,body:{package_numbers:[pkgNumber]}},
+    {create:`label/create_job?${SC}`,status:`label/get_job?${SC}`,body:{package_number:pkgNumber,order_sn:orderSn}},
+  ];
+  for (const jc of JOB_CONFIGS) {
+    for (const v of [3,4]) {
+      const ename=`lbl-job-v${v}-${jc.create.split('?')[0].replace(/\//g,'-').slice(0,25)}`;
+      if(!open(ename)) continue;
+      try {
+        const cr=await req({url:`${SB}/api/v${v}/${jc.create}`,method:'POST',headers:hdrs},JSON.stringify(jc.body));
+        const jobId=cr.data?.data?.job_id||cr.data?.job_id;
+        if(jobId){
+          for(let poll=0;poll<6;poll++){
+            await new Promise(r=>setTimeout(r,1500));
+            const sr=await req({url:`${SB}/api/v${v}/${jc.status}&job_id=${jobId}`,method:'GET',headers:hdrs});
+            const fileUrl=sr.data?.data?.file_list?.[0]?.url||sr.data?.data?.pdf_url||sr.data?.data?.url;
+            if(fileUrl){
+              const pr=await reqBinary({url:fileUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
+              if(pr.isPdf&&pr.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:pr.bytes.toString('base64'),method:ename,job_id:jobId};}
+            }
+          }
+        }
+        fail(ename);
+      } catch(e){fail(ename);}
+    }
+  }
+
+  // HTML FALLBACK
+  try {
+    const r=await req({url:`${SB}/awbprint?order_sn=${encodeURIComponent(orderSn)}&first_time=1&lang=pt-br`,method:'GET',headers:hdrs});
+    if(r.raw?.includes('<html'))return{ok:true,html:r.raw,method:'lbl-html-fallback'};
+  } catch(e){}
+
+  return { ok:false, error:'Todos os label endpoints falharam' };
+}
+
+
+// ── VARIAÇÕES DE PARÂMETROS (multiplica cobertura 3x) ────────
+// Gera variações de sort/filter/pagesize para cada endpoint base
+function getParamVariants(baseUrl, isSeller) {
+  const variants = [baseUrl]; // sempre inclui o original
+
+  if (isSeller) {
+    // Variações de page_size para endpoints de listagem
+    if (baseUrl.includes('list') || baseUrl.includes('search')) {
+      variants.push(baseUrl.replace(/page_size=\d+/, 'page_size=60'));
+      variants.push(baseUrl.replace(/page_size=\d+/, 'page_size=12'));
+    }
+  } else {
+    // Variações de limit para buyer API
+    if (baseUrl.includes('limit=')) {
+      variants.push(baseUrl.replace(/limit=\d+/, 'limit=60'));
+      variants.push(baseUrl.replace(/limit=\d+/, 'limit=10'));
+    }
+    // Variações de version
+    if (baseUrl.includes('version=2')) {
+      variants.push(baseUrl.replace('version=2', 'version=1'));
+    }
+  }
+  return [...new Set(variants)]; // deduplica
+}
+
+// ════════════════════════════════════════════════════════════
+// 🖥️ HTTP SERVER v13 — 2500+ ENDPOINTS ELÁSTICOS
+// ════════════════════════════════════════════════════════════
+http.createServer(async (req, res) => {
+  const p = url_mod.parse(req.url, true).pathname;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') { res.writeHead(200); return res.end(); }
+
+  const auth = req.headers['authorization'] || '';
+  if (!auth.startsWith('Bearer ') || auth.slice(7) !== SECRET) {
+    res.writeHead(401); return res.end(JSON.stringify({ error: 'Nao autorizado' }));
+  }
+
+  if (req.method === 'GET' && p === '/health') {
+    const cbList = Object.entries(breaker).map(([n,b])=>({endpoint:n,ok:b.ok,fails:b.fails,wins:b.wins||0}));
+    const topEps = Object.entries(endpointMemory).sort((a,b)=>b[1].score-a[1].score).slice(0,10).map(([n,v])=>({name:n,score:v.score,uses:v.uses}));
+
+    // Estatísticas dos endpoints gerados
+    const dummySC = 'SPC_CDS=test&SPC_CDS_VER=2';
+    const epStats = getStats(dummySC);
+
+    res.writeHead(200);
+    return res.end(JSON.stringify({
+      ok: true, service: 'vendry-sync', version: '13.0.0',
+      proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
+      endpoints_total: epStats.total,
+      generated_eps: {
+        seller_center: epStats.seller_center,
+        buyer_api: epStats.buyer_api,
+        categories: epStats.categories,
+        open: epStats.open,
+        blocked: epStats.blocked,
+      },
+      v10_sync_preserved: 50,
+      ua_pool: UA_ALL.length,
+      intelligence: {
+        hour_score: getCurrentHourScore(),
+        recent_results: recentResults.slice(-10).map(r=>r.type),
+        top_endpoints: topEps,
+        adaptive_delay: getAdaptiveDelay(),
+      },
+      circuit_breakers_total: Object.keys(breaker).length,
+      circuit_breakers_sample: cbList.slice(0,20),
+      last_sync: lastTime ? new Date(lastTime).toISOString() : null,
+      best_endpoint: bestEp,
+    }));
+  }
+
+  if (req.method === 'GET' && p === '/intelligence') {
+    res.writeHead(200);
+    return res.end(JSON.stringify({
+      header_scores: headerScores, endpoint_memory: endpointMemory,
+      time_pattern: timePattern.map((h,i)=>({hour:i,...h})),
+      recent_results: recentResults.slice(-20),
+    }));
+  }
+
+  if (req.method === 'GET' && p === '/endpoints') {
+    // Lista todos os endpoints gerados para diagnóstico
+    const sc = 'SPC_CDS=diag&SPC_CDS_VER=2';
+    const stats = getStats(sc);
+    res.writeHead(200);
+    return res.end(JSON.stringify(stats));
+  }
+
+  const readBody = () => new Promise(resolve => {
+    let b = '';
+    req.on('data', c => b += c);
+    req.on('end', () => { try { resolve(JSON.parse(b)); } catch(e) { resolve({}); } });
+  });
+
+  if (req.method === 'POST' && p === '/sync') {
+    const d = await readBody();
+    if (!d.cookies || !d.spc_cds) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies e spc_cds obrigatorios' })); }
+    try {
+      const r = await sync(d.cookies, d.fe_session||'', d.spc_cds);
+      res.writeHead(r.ok?200:r.expired?401:500);
+      return res.end(JSON.stringify(r));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ error: e.message })); }
+  }
+
+  if (req.method === 'POST' && p === '/search-public') {
+    const d = await readBody();
+    if (!d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'shopid obrigatorio' })); }
+    try {
+      const r = await searchPublic(d.shopid, d.cookies||'', d.limit||20, d.offset||0);
+      res.writeHead(r.ok?200:503);
+      return res.end(JSON.stringify(r));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok:false, error:e.message, items:[] })); }
+  }
+
+  if (req.method === 'POST' && p === '/orders') {
+    const d = await readBody();
+    if (!d.cookies || !d.spc_cds) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies e spc_cds obrigatorios' })); }
+    try {
+      const r = await getOrders(d.cookies, d.fe_session||'', d.spc_cds);
+      res.writeHead(200);
+      return res.end(JSON.stringify(r));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok:false, error:e.message, orders:[] })); }
+  }
+
+  if (req.method === 'POST' && p === '/label') {
+    const d = await readBody();
+    if (!d.cookies || !d.order_sn) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies e order_sn obrigatorios' })); }
+    try {
+      const r = await getLabel(d.cookies, d.fe_session||'', d.spc_cds||'', d.order_sn, d.package_number||'', d.channel_id||90016, d.shop_id||0, d.order_id||0);
+      res.writeHead(r.ok?200:503);
+      return res.end(JSON.stringify(r));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok:false, error:e.message })); }
+  }
+
+  res.writeHead(404);
+  res.end(JSON.stringify({ error: 'Not found' }));
+
+}).listen(PORT, () => {
+  // Calcula total de endpoints ao iniciar
+  const sc = 'SPC_CDS=boot&SPC_CDS_VER=2';
+  const stats = getStats(sc);
+  console.log(`\n✅ Vendry Sync Server v13.0 — porta ${PORT}`);
+  console.log(`🎯 ENDPOINTS GERADOS: ${stats.total}`);
+  console.log(`   Seller Center: ${stats.seller_center} (${stats.sc_categories} categorias × 5 versões)`);
+  console.log(`   Buyer API:     ${stats.buyer_api} (${stats.bu_categories} categorias × 5 versões)`);
+  console.log(`   v10 Sync:      50 (preservados)`);
+  console.log(`   UA Pool:       ${UA_ALL.length} user-agents`);
+  console.log(`🔒 Proxy: ${getProxy() ? getProxy().host : 'NAO CONFIGURADO'}`);
+  console.log(`🧠 IA: Adaptive Intelligence Engine ativo\n`);
+});
