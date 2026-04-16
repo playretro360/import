@@ -2062,40 +2062,53 @@ function residentialReq(opts, body) {
     const proxy = getResidentialProxy();
     if (!proxy) return reject(new Error('BD_PROXY_USER/BD_PROXY_HOST nao configurados'));
     const tgt = new url_mod.URL(opts.url);
-    const isHttps = tgt.protocol === 'https:';
-    const conn = http.request({
+    const auth = Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64');
+    const connectConn = http.request({
       host: proxy.host, port: proxy.port, method: 'CONNECT',
-      path: `${tgt.hostname}:${isHttps ? 443 : 80}`,
+      path: `${tgt.hostname}:443`,
       headers: {
-        'Proxy-Authorization': 'Basic ' + Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64'),
-        'Host': tgt.hostname,
+        'Proxy-Authorization': 'Basic ' + auth,
+        'Host': tgt.hostname + ':443',
+        'Proxy-Connection': 'Keep-Alive',
+        'User-Agent': 'Mozilla/5.0',
       },
     });
-    conn.setTimeout(12000);
-    conn.on('error', reject);
-    conn.on('timeout', () => { conn.destroy(); reject(new Error('CONNECT timeout')); });
-    conn.on('connect', (res, sock) => {
-      if (res.statusCode !== 200) { sock.destroy(); return reject(new Error('Proxy ' + res.statusCode)); }
-      const ro = { host: tgt.hostname, port: isHttps ? 443 : 80, path: tgt.pathname + tgt.search, method: opts.method || 'GET', headers: opts.headers || {}, socket: sock, agent: false };
-      if (isHttps) ro.servername = tgt.hostname;
-      const r = (isHttps ? https : http).request(ro);
-      r.setTimeout(18000);
-      r.on('error', reject);
-      r.on('timeout', () => { r.destroy(); reject(new Error('Request timeout')); });
-      r.on('response', resp => {
-        const chunks = [];
-        resp.on('data', c => chunks.push(c));
-        resp.on('end', () => {
-          const raw = Buffer.concat(chunks).toString('utf8');
-          try { resolve({ status: resp.statusCode, data: JSON.parse(raw), headers: resp.headers, raw }); }
-          catch { resolve({ status: resp.statusCode, data: {}, headers: resp.headers, raw }); }
+    connectConn.setTimeout(15000);
+    connectConn.on('error', reject);
+    connectConn.on('timeout', () => { connectConn.destroy(); reject(new Error('CONNECT timeout')); });
+    connectConn.on('connect', (connectRes, sock) => {
+      if (connectRes.statusCode !== 200) {
+        sock.destroy();
+        return reject(new Error('Proxy ' + connectRes.statusCode + ' ' + connectRes.statusMessage));
+      }
+      const tls = require('tls');
+      const tlsSock = tls.connect({ socket: sock, servername: tgt.hostname, rejectUnauthorized: false });
+      tlsSock.on('error', reject);
+      tlsSock.on('secureConnect', () => {
+        const reqHeaders = { ...(opts.headers||{}), 'Host': tgt.hostname, 'Connection': 'close' };
+        const path = tgt.pathname + (tgt.search || '');
+        let reqStr = `${opts.method||'GET'} ${path} HTTP/1.1\r\n`;
+        Object.entries(reqHeaders).forEach(([k,v]) => { reqStr += `${k}: ${v}\r\n`; });
+        reqStr += '\r\n';
+        tlsSock.write(reqStr);
+        if (body) tlsSock.write(typeof body === 'string' ? body : JSON.stringify(body));
+        let rawData = Buffer.alloc(0);
+        tlsSock.on('data', chunk => { rawData = Buffer.concat([rawData, chunk]); });
+        tlsSock.on('end', () => {
+          const rawStr = rawData.toString('utf8');
+          const headerEnd = rawStr.indexOf('\r\n\r\n');
+          const statusMatch = rawStr.match(/HTTP\/[\d.]+ (\d+)/);
+          const status = statusMatch ? parseInt(statusMatch[1]) : 200;
+          let bodyStr = headerEnd >= 0 ? rawStr.slice(headerEnd + 4) : rawStr;
+          // Remove chunk sizes se chunked transfer
+          try { bodyStr = bodyStr.replace(/^[0-9a-fA-F]+\r\n/gm, '').replace(/\r\n/g, ''); } catch(e) {}
+          try { resolve({ status, data: JSON.parse(bodyStr), headers: {}, raw: bodyStr }); }
+          catch { resolve({ status, data: {}, headers: {}, raw: bodyStr }); }
         });
-        resp.on('error', reject);
+        tlsSock.setTimeout(20000, () => { tlsSock.destroy(); reject(new Error('TLS timeout')); });
       });
-      if (body) r.write(body);
-      r.end();
     });
-    conn.end();
+    connectConn.end();
   });
 }
 
