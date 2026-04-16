@@ -1,4 +1,4 @@
-// Vendry Sync Server v13.0 — ULTRA ELASTIC 2500+ ENDPOINTS
+// Vendry Sync Server v14.0 — ULTRA ELASTIC 2500+ ENDPOINTS
 // GERADOR AUTOMÁTICO: paths × versões × variações = cobertura total Shopee
 // INDETECTÁVEL: brd.superproxy.io + IA adaptativa + 8 UA pool
 // Categorias: Order | Product | Logistics | Shop | Finance | Promotion |
@@ -1432,6 +1432,480 @@ function getParamVariants(baseUrl, isSeller) {
   return [...new Set(variants)]; // deduplica
 }
 
+
+// ════════════════════════════════════════════════════════════
+// 🤖 NÍVEL 2+3 — HEADLESS BROWSER + FINGERPRINT MÁXIMO
+// Bright Data Scraping Browser via CDP WebSocket
+// Fingerprint: Canvas, WebGL, Timezone, Resolution, Mouse, Audio
+// ════════════════════════════════════════════════════════════
+const WebSocket = require('ws');
+
+// ── FINGERPRINT PROFILES ─────────────────────────────────────
+// Perfis reais de dispositivos brasileiros
+const FP_PROFILES = [
+  { width:1920, height:1080, dpr:1, platform:'Win32',   tz:'America/Sao_Paulo',  gl:'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0)',   renderer:'Intel(R) UHD Graphics 620', cores:4,  mem:8  },
+  { width:1366, height:768,  dpr:1, platform:'Win32',   tz:'America/Sao_Paulo',  gl:'ANGLE (Intel, Intel(R) HD Graphics 520 Direct3D11 vs_5_0 ps_5_0)',    renderer:'Intel(R) HD Graphics 520',  cores:4,  mem:4  },
+  { width:1440, height:900,  dpr:2, platform:'MacIntel', tz:'America/Sao_Paulo', gl:'ANGLE (Apple, Apple M1, OpenGL 4.1)',                                  renderer:'Apple M1',                  cores:8,  mem:8  },
+  { width:1920, height:1080, dpr:1, platform:'Win32',   tz:'America/Recife',     gl:'ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0)',     renderer:'NVIDIA GeForce GTX 1050',   cores:8,  mem:16 },
+  { width:1280, height:800,  dpr:1, platform:'Win32',   tz:'America/Fortaleza',  gl:'ANGLE (AMD, Radeon RX 580 Series Direct3D11 vs_5_0 ps_5_0)',           renderer:'Radeon RX 580',             cores:6,  mem:8  },
+  { width:2560, height:1440, dpr:1, platform:'Win32',   tz:'America/Manaus',     gl:'ANGLE (Intel, Intel(R) Iris Xe Graphics Direct3D11 vs_5_0 ps_5_0)',    renderer:'Intel(R) Iris Xe Graphics', cores:12, mem:16 },
+];
+
+const rndFP = () => FP_PROFILES[Math.floor(Math.random() * FP_PROFILES.length)];
+
+// ── CDP HELPER ────────────────────────────────────────────────
+class CDPSession {
+  constructor(ws) {
+    this.ws = ws;
+    this.id = 1;
+    this.pending = new Map();
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.id && this.pending.has(msg.id)) {
+          const { resolve, reject } = this.pending.get(msg.id);
+          this.pending.delete(msg.id);
+          if (msg.error) reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+          else resolve(msg.result);
+        }
+      } catch(e) {}
+    });
+    ws.on('error', (e) => {
+      for (const [, {reject}] of this.pending) reject(e);
+      this.pending.clear();
+    });
+  }
+
+  send(method, params={}) {
+    return new Promise((resolve, reject) => {
+      const id = this.id++;
+      this.pending.set(id, { resolve, reject });
+      this.ws.send(JSON.stringify({ id, method, params }));
+      setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(new Error(`CDP timeout: ${method}`));
+        }
+      }, 20000);
+    });
+  }
+
+  close() { try { this.ws.close(); } catch(e) {} }
+}
+
+// ── NÍVEL 3: injeta fingerprint completo na página ────────────
+async function injectFingerprint(cdp, fp) {
+  const script = `
+    (() => {
+      // ── Canvas fingerprint ──
+      const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+      const noise = ${Math.random().toFixed(8)};
+      HTMLCanvasElement.prototype.toDataURL = function(...args) {
+        const ctx = this.getContext('2d');
+        if (ctx) {
+          const idata = origGetImageData.call(ctx, 0, 0, this.width, this.height);
+          for (let i = 0; i < idata.data.length; i += 4) {
+            idata.data[i]     = Math.max(0, Math.min(255, idata.data[i]     + (Math.random() * noise * 4 - noise * 2)));
+            idata.data[i + 1] = Math.max(0, Math.min(255, idata.data[i + 1] + (Math.random() * noise * 4 - noise * 2)));
+            idata.data[i + 2] = Math.max(0, Math.min(255, idata.data[i + 2] + (Math.random() * noise * 4 - noise * 2)));
+          }
+          ctx.putImageData(idata, 0, 0);
+        }
+        return origToDataURL.apply(this, args);
+      };
+
+      // ── WebGL fingerprint ──
+      const getParam = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 37445) return '${fp.gl}';
+        if (param === 37446) return '${fp.renderer}';
+        return getParam.call(this, param);
+      };
+      if (typeof WebGL2RenderingContext !== 'undefined') {
+        const getParam2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function(param) {
+          if (param === 37445) return '${fp.gl}';
+          if (param === 37446) return '${fp.renderer}';
+          return getParam2.call(this, param);
+        };
+      }
+
+      // ── AudioContext fingerprint ──
+      const origCreateOsc = AudioContext.prototype.createOscillator;
+      AudioContext.prototype.createOscillator = function() {
+        const osc = origCreateOsc.apply(this, arguments);
+        const origStart = osc.start.bind(osc);
+        osc.start = function(t) {
+          return origStart(t + (Math.random() - 0.5) * 0.0001);
+        };
+        return osc;
+      };
+
+      // ── Screen + window ──
+      Object.defineProperty(screen, 'width',       { get: () => ${fp.width}  });
+      Object.defineProperty(screen, 'height',      { get: () => ${fp.height} });
+      Object.defineProperty(screen, 'availWidth',  { get: () => ${fp.width}  });
+      Object.defineProperty(screen, 'availHeight', { get: () => ${fp.height} - 40 });
+      Object.defineProperty(window, 'devicePixelRatio', { get: () => ${fp.dpr} });
+      Object.defineProperty(navigator, 'platform',      { get: () => '${fp.platform}' });
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => ${fp.cores} });
+      Object.defineProperty(navigator, 'deviceMemory',  { get: () => ${fp.mem} });
+
+      // ── Timezone ──
+      const origDateTimeFormat = Intl.DateTimeFormat;
+      window.Intl.DateTimeFormat = function(...args) {
+        if (!args[1]) args[1] = {};
+        if (!args[1].timeZone) args[1].timeZone = '${fp.tz}';
+        return new origDateTimeFormat(...args);
+      };
+      Object.assign(window.Intl.DateTimeFormat, origDateTimeFormat);
+
+      // ── Permissions API ──
+      if (navigator.permissions) {
+        const origQuery = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = (params) => {
+          if (['notifications','geolocation','camera','microphone'].includes(params.name)) {
+            return Promise.resolve({ state: 'prompt', onchange: null });
+          }
+          return origQuery(params);
+        };
+      }
+
+      // ── Plugins (lista realista) ──
+      Object.defineProperty(navigator, 'plugins', { get: () => ({
+        length: 3,
+        0: { name: 'PDF Viewer',            description: 'Portable Document Format',  filename: 'internal-pdf-viewer'    },
+        1: { name: 'Chrome PDF Viewer',     description: 'Portable Document Format',  filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+        2: { name: 'Chromium PDF Viewer',   description: 'Portable Document Format',  filename: 'internal-pdf-viewer'    },
+      })});
+
+      // ── WebRTC protection — bloqueia IP leak ──
+      if (window.RTCPeerConnection) {
+        const origRTC = window.RTCPeerConnection;
+        window.RTCPeerConnection = function(config, ...rest) {
+          if (config && config.iceServers) config.iceServers = [];
+          return new origRTC(config, ...rest);
+        };
+        Object.assign(window.RTCPeerConnection, origRTC);
+      }
+
+      // ── Headless detection patches ──
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR','pt','en-US','en'] });
+      window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}), app: { isInstalled: false } };
+      Object.defineProperty(document, 'hidden',           { get: () => false });
+      Object.defineProperty(document, 'visibilityState',  { get: () => 'visible' });
+    })();
+  `;
+
+  await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: script });
+}
+
+// ── MOUSE MOVEMENT SIMULATION (Nível 3) ──────────────────────
+// Bezier curve human-like mouse trajectory
+async function simulateHumanInteraction(cdp, fp) {
+  // Simula scrolling natural
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: Math.round(fp.width * 0.3 + Math.random() * 100), y: Math.round(fp.height * 0.2 + Math.random() * 50),
+    modifiers: 0, buttons: 0
+  });
+  await new Promise(r => setTimeout(r, 80 + Math.random() * 120));
+
+  // Move para centro da página (padrão humano)
+  const steps = 8 + Math.floor(Math.random() * 6);
+  const startX = Math.round(fp.width * 0.3), startY = Math.round(fp.height * 0.2);
+  const endX   = Math.round(fp.width * 0.5 + (Math.random() - 0.5) * 200);
+  const endY   = Math.round(fp.height * 0.5 + (Math.random() - 0.5) * 100);
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    // Bezier quadrático pra simular curva natural do mouse
+    const cx = startX + (endX - startX) * 0.5 + (Math.random() - 0.5) * 80;
+    const cy = startY + (endY - startY) * 0.1 - 60 + Math.random() * 30;
+    const x  = Math.round((1-t)*(1-t)*startX + 2*(1-t)*t*cx + t*t*endX);
+    const y  = Math.round((1-t)*(1-t)*startY + 2*(1-t)*t*cy + t*t*endY);
+    await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers: 0, buttons: 0 });
+    await new Promise(r => setTimeout(r, 12 + Math.random() * 25));
+  }
+
+  // Scroll natural
+  await cdp.send('Input.dispatchMouseEvent', {
+    type: 'mouseWheel', x: endX, y: endY,
+    deltaX: 0, deltaY: 80 + Math.random() * 120
+  });
+  await new Promise(r => setTimeout(r, 200 + Math.random() * 300));
+}
+
+// ── COOKIE HELPERS ────────────────────────────────────────────
+function parseCookies(cookieStr) {
+  const jar = {};
+  if (!cookieStr) return jar;
+  cookieStr.split(';').forEach(c => {
+    const i = c.indexOf('=');
+    if (i < 0) return;
+    const k = c.slice(0, i).trim();
+    const v = c.slice(i + 1).trim();
+    if (k) jar[k] = v;
+  });
+  return jar;
+}
+
+function cookiesToHeader(jar) {
+  return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+function mergeCookiesObj(existing, newCookies) {
+  const jar = parseCookies(existing);
+  if (Array.isArray(newCookies)) {
+    newCookies.forEach(c => {
+      const kv = c.split(';')[0].trim();
+      const i = kv.indexOf('=');
+      if (i < 0) return;
+      const k = kv.slice(0, i).trim();
+      const v = kv.slice(i + 1).trim();
+      if (k && !['Path','Domain','Max-Age','Expires','HttpOnly','Secure','SameSite'].includes(k)) jar[k] = v;
+    });
+  }
+  return cookiesToHeader(jar);
+}
+
+function getCookieVal(cookieStr, name) {
+  const m = (cookieStr || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+// ── CORE: Browser refresh via Bright Data ────────────────────
+async function refreshWithBrowser(cookies, feSession) {
+  const bdWss = BD_WSS;
+  if (!bdWss) throw new Error('BD_WSS nao configurado');
+
+  const fp = rndFP();
+  console.log(`[browser] iniciando | fp=${fp.width}x${fp.height} tz=${fp.tz} gl=${fp.renderer.slice(0,20)}`);
+
+  // Conecta ao Bright Data Scraping Browser via CDP
+  const ws = new WebSocket(bdWss, {
+    headers: { 'User-Agent': rnd(UA_DESKTOP) },
+    handshakeTimeout: 15000,
+  });
+
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+    setTimeout(() => reject(new Error('WS connect timeout')), 15000);
+  });
+
+  const cdp = new CDPSession(ws);
+  console.log('[browser] CDP conectado');
+
+  try {
+    // ── Setup: viewport + UA ──────────────────────────────────
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: fp.width, height: fp.height, deviceScaleFactor: fp.dpr, mobile: false,
+    });
+    await cdp.send('Emulation.setTimezoneOverride', { timezoneId: fp.tz });
+    await cdp.send('Emulation.setLocaleOverride',   { locale: 'pt-BR' });
+    await cdp.send('Network.enable', {});
+    await cdp.send('Page.enable', {});
+
+    // ── Nível 3: Fingerprint completo ────────────────────────
+    await injectFingerprint(cdp, fp);
+    console.log('[browser] fingerprint injetado');
+
+    // ── Seta cookies da sessão do seller ─────────────────────
+    const jar = parseCookies(cookies);
+    const cookieObjs = Object.entries(jar).map(([name, value]) => ({
+      name, value,
+      domain: '.shopee.com.br',
+      path: '/',
+      secure: true,
+      httpOnly: false,
+      sameSite: 'Lax',
+    }));
+    for (const ck of cookieObjs) {
+      try { await cdp.send('Network.setCookie', ck); } catch(e) {}
+    }
+    console.log(`[browser] ${cookieObjs.length} cookies setados`);
+
+    // ── Navega para Seller Center ─────────────────────────────
+    const navUrl = 'https://seller.shopee.com.br/portal/product/list/all';
+    await cdp.send('Page.navigate', { url: navUrl });
+
+    // Aguarda carregamento (com timeout)
+    await new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => { done = true; resolve(); }, 12000);
+      cdp.ws.on('message', (data) => {
+        if (done) return;
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.domContentEventFired') {
+            clearTimeout(timer); done = true; resolve();
+          }
+        } catch(e) {}
+      });
+    });
+    console.log('[browser] página carregada');
+
+    // ── Simula comportamento humano ───────────────────────────
+    await simulateHumanInteraction(cdp, fp);
+
+    // ── Aguarda Shopee processar auth (requisições de background) ─
+    await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
+
+    // ── Captura cookies atualizados ───────────────────────────
+    const { cookies: newCdpCookies } = await cdp.send('Network.getAllCookies', {});
+    const newCookies = (newCdpCookies || [])
+      .filter(c => c.domain.includes('shopee.com.br') || c.domain.includes('seller.shopee'))
+      .map(c => `${c.name}=${c.value}`);
+
+    if (newCookies.length === 0) throw new Error('Nenhum cookie capturado do browser');
+
+    // Merge: novos sobrescrevem os antigos
+    const mergedCookies = mergeCookiesObj(cookies, newCookies);
+    const newSpcCds = getCookieVal(mergedCookies, 'SPC_CDS');
+    const hasSession = !!newSpcCds && newSpcCds !== getCookieVal(cookies, 'SPC_CDS');
+
+    console.log(`[browser] ${newCookies.length} cookies capturados | SPC_CDS mudou: ${hasSession}`);
+
+    // Verifica se sessão ainda é válida navegando uma API leve
+    let sessionOk = true;
+    try {
+      const spcCds = getCookieVal(mergedCookies, 'SPC_CDS');
+      const result = await cdp.send('Runtime.evaluate', {
+        expression: `
+          fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2', {
+            credentials: 'include'
+          }).then(r => r.json()).then(d => JSON.stringify({code: d.code, errcode: d.errcode})).catch(e => JSON.stringify({error: e.message}))
+        `,
+        awaitPromise: true,
+        timeout: 8000,
+      });
+      const apiResult = JSON.parse(result.result?.value || '{}');
+      if (apiResult.errcode === 2 || apiResult.code === 2) {
+        sessionOk = false;
+        console.log('[browser] sessão ainda expirada após browser refresh');
+      } else {
+        console.log('[browser] sessão validada via API ✓');
+      }
+    } catch(e) {
+      console.log('[browser] validação API falhou (não crítico):', e.message);
+    }
+
+    cdp.close();
+    return {
+      ok: sessionOk,
+      expired: !sessionOk,
+      method: 'browser_l2l3',
+      cookies: mergedCookies,
+      cookies_count: newCookies.length,
+      fingerprint: `${fp.width}x${fp.height} ${fp.tz}`,
+      error: sessionOk ? undefined : 'Sessão expirada — reconecte via extensão',
+    };
+
+  } catch(e) {
+    cdp.close();
+    throw e;
+  }
+}
+
+// ── COOKIE REFRESH: L2/L3 → L1 → fallback ────────────────────
+function getCookie(str, name) {
+  const m = (str || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+function mergeCookies(existing, setCookieHeaders) {
+  const jar = {};
+  (existing || '').split(';').forEach(c => {
+    const i = c.indexOf('='); if (i < 0) return;
+    const k = c.slice(0, i).trim(), v = c.slice(i+1).trim();
+    if (k) jar[k] = v;
+  });
+  (setCookieHeaders || []).forEach(sc => {
+    const kv = sc.split(';')[0].trim(); const i = kv.indexOf('='); if (i < 0) return;
+    const k = kv.slice(0,i).trim(), v = kv.slice(i+1).trim();
+    if (k && !['Path','Domain','Max-Age','Expires','HttpOnly','Secure','SameSite'].includes(k)) jar[k] = v;
+  });
+  return Object.entries(jar).map(([k,v]) => `${k}=${v}`).join('; ');
+}
+
+async function refreshCookies(cookies, feSession) {
+  const errors = [];
+
+  // ── NÍVEL 2+3: Browser real (melhor) ─────────────────────────
+  if (BD_WSS) {
+    try {
+      console.log('[refresh] tentando Nível 2+3 (browser real BD)...');
+      const r = await refreshWithBrowser(cookies, feSession);
+      if (r.ok) {
+        console.log(`[refresh] ✅ L2+L3 OK | ${r.cookies_count} cookies | fp=${r.fingerprint}`);
+        return r;
+      }
+      if (r.expired) return r; // sessão definitivamente morta
+      errors.push('L2/L3: ' + (r.error || 'falhou'));
+    } catch(e) {
+      errors.push('L2/L3: ' + e.message);
+      console.log('[refresh] L2+L3 erro:', e.message);
+    }
+  }
+
+  // ── NÍVEL 1: Refresh token via proxy ────────────────────────
+  const spcRTId = getCookie(cookies, 'SPC_R_T_ID');
+  const spcRTIv = getCookie(cookies, 'SPC_R_T_IV');
+  const csrftoken = getCookie(cookies, 'csrftoken');
+
+  if (spcRTId && spcRTIv) {
+    console.log('[refresh] tentando Nível 1 (refresh token via proxy)...');
+    for (const url of [
+      'https://seller.shopee.com.br/api/v4/account/token/refresh',
+      'https://seller.shopee.com.br/api/v3/account/token/refresh',
+    ]) {
+      try {
+        const hdrs = H(cookies, feSession, {
+          'Content-Type': 'application/json;charset=UTF-8',
+          'x-csrftoken': csrftoken,
+          'sc-fe-ver': '21.143762',
+        });
+        const r = await req({ url, method: 'POST', headers: hdrs },
+          JSON.stringify({ refresh_token: spcRTId, iv: spcRTIv }));
+        const setCookies = Array.isArray(r.headers['set-cookie'])
+          ? r.headers['set-cookie']
+          : (r.headers['set-cookie'] ? [r.headers['set-cookie']] : []);
+        if (r.status === 200 && setCookies.length > 0) {
+          const newCookies = mergeCookies(cookies, setCookies);
+          console.log(`[refresh] ✅ L1 token refresh OK | ${setCookies.length} cookies`);
+          return { ok: true, method: 'refresh_token_l1', cookies: newCookies, new_count: setCookies.length };
+        }
+      } catch(e) { errors.push('L1-token: ' + e.message); }
+    }
+  }
+
+  // ── FALLBACK: basic_info via proxy (verifica se ainda válido) ─
+  console.log('[refresh] tentando fallback basic_info...');
+  const spcCds = getCookie(cookies, 'SPC_CDS');
+  try {
+    const hdrs = H(cookies, feSession, { 'sc-fe-ver': '21.143762' });
+    const r = await req({ url: `https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${spcCds}&SPC_CDS_VER=2`, method: 'GET', headers: hdrs });
+    const expired = r.data?.errcode === 2 || r.data?.code === 2 || r.status === 401;
+    if (expired) {
+      console.log('[refresh] ❌ sessão expirada confirmada');
+      return { ok: false, expired: true, error: 'Sessão expirada — seller precisa reconectar via extensão Chrome' };
+    }
+    const setCookies = Array.isArray(r.headers['set-cookie'])
+      ? r.headers['set-cookie']
+      : (r.headers['set-cookie'] ? [r.headers['set-cookie']] : []);
+    const newCookies = setCookies.length > 0 ? mergeCookies(cookies, setCookies) : cookies;
+    console.log(`[refresh] ✅ fallback OK | status=${r.status} | ${setCookies.length} cookies novos`);
+    return { ok: true, method: 'basic_info_fallback', cookies: newCookies, new_count: setCookies.length };
+  } catch(e) {
+    errors.push('fallback: ' + e.message);
+  }
+
+  return { ok: false, error: 'Todos os métodos falharam: ' + errors.join(' | ') };
+}
+
+
 // ════════════════════════════════════════════════════════════
 // 🖥️ HTTP SERVER v13 — 2500+ ENDPOINTS ELÁSTICOS
 // ════════════════════════════════════════════════════════════
@@ -1456,7 +1930,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '13.0.0',
+      ok: true, service: 'vendry-sync', version: '14.0.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       endpoints_total: epStats.total,
       generated_eps: {
@@ -1547,13 +2021,27 @@ http.createServer(async (req, res) => {
     } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok:false, error:e.message })); }
   }
 
+
+  if (req.method === 'POST' && p === '/cookie-refresh') {
+    const d = await readBody();
+    if (!d.cookies) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies obrigatorio' })); }
+    try {
+      const r = await refreshCookies(d.cookies, d.fe_session || '');
+      res.writeHead(r.ok ? 200 : r.expired ? 401 : 500);
+      return res.end(JSON.stringify(r));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
+
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Not found' }));
 
 }).listen(PORT, () => {
   // Startup leve — endpoints gerados sob demanda
   const proxyInfo = getProxy() ? getProxy().host + ':' + getProxy().port : 'NAO CONFIGURADO';
-  console.log(`✅ Vendry Sync Server v13.0 | porta ${PORT} | proxy: ${proxyInfo}`);
+  console.log(`✅ Vendry Sync Server v14.0 | porta ${PORT} | proxy: ${proxyInfo}`);
   console.log(`   SC: ${Object.keys(SC_PATHS).length} categorias | BU: ${Object.keys(BU_PATHS).length} categorias | v10 sync: 50 eps`);
   console.log(`   UA pool: ${UA_ALL.length} | IA: ON | Pronto!`);
 });
