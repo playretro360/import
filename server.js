@@ -976,7 +976,7 @@ async function callEndpoint(ep, cookies, feSession, body) {
     ? sellerHeaders(cookies, feSession, ep.mobile||false)
     : buyerHeaders(cookies, ep.mobile||false);
   if (ep.method === 'POST' || body) hdrs['content-type'] = 'application/json;charset=UTF-8';
-  return req({ url: ep.url, method: body?'POST':'GET', headers: hdrs }, body);
+  return proxyReq({ url: ep.url, method: body?'POST':'GET', headers: hdrs }, body);
 }
 
 // ── ADAPTIVE SEARCH (usa todos endpoints por categoria) ───────
@@ -1267,7 +1267,7 @@ async function getOrders(cookies, feSession, spcCds) {
 // 🏷️ LABELS — usa TODOS endpoints de label + logistics do SC
 // ════════════════════════════════════════════════════════════
 
-function reqBinary(opts) {
+function proxyReqBinary(opts) {
   return new Promise((resolve,reject)=>{
     const proxy=getProxy();
     if(!proxy)return reject(new Error('Proxy nao configurado'));
@@ -1329,7 +1329,7 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
       const ename=`lbl-bin-v${v}-${path.split('?')[0].replace(/\//g,'-').slice(0,30)}`;
       if(!open(ename)) continue;
       try {
-        const r=await reqBinary({url:`${SB}/api/v${v}/${path}`,method:'GET',headers:hdrs});
+        const r=await proxyReqBinary({url:`${SB}/api/v${v}/${path}`,method:'GET',headers:hdrs});
         if(r.isPdf&&r.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:r.bytes.toString('base64'),method:ename};}
         fail(ename);
       } catch(e){fail(ename);}
@@ -1358,7 +1358,7 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
         const r=await proxyReq({url:`${SB}/api/v${v}/${p}`,method:'GET',headers:hdrs});
         const pdfUrl=deepUrl(r.data,f);
         if(pdfUrl){
-          const pr=await reqBinary({url:pdfUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
+          const pr=await proxyReqBinary({url:pdfUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
           if(pr.isPdf&&pr.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:pr.bytes.toString('base64'),method:ename};}
         }
         fail(ename);
@@ -1387,7 +1387,7 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
             const sr=await proxyReq({url:`${SB}/api/v${v}/${jc.status}&job_id=${jobId}`,method:'GET',headers:hdrs});
             const fileUrl=sr.data?.data?.file_list?.[0]?.url||sr.data?.data?.pdf_url||sr.data?.data?.url;
             if(fileUrl){
-              const pr=await reqBinary({url:fileUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
+              const pr=await proxyReqBinary({url:fileUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
               if(pr.isPdf&&pr.bytes?.length>1000){win(ename);return{ok:true,pdf_base64:pr.bytes.toString('base64'),method:ename,job_id:jobId};}
             }
           }
