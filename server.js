@@ -2045,6 +2045,60 @@ async function searchViaBrowser(shopid, limit, offset) {
   }
 }
 
+
+// ── RESIDENTIAL PROXY (para search pública — não bloqueia IP) ─────────────
+function getResidentialProxy() {
+  const user = process.env.BD_PROXY_USER || '';
+  const hostport = process.env.BD_PROXY_HOST || '';
+  if (!user || !hostport) return null;
+  const [host, port] = hostport.split(':');
+  const [username, password] = user.split(':');
+  if (!host || !port || !username || !password) return null;
+  return { user: username, pass: password, host, port: parseInt(port) };
+}
+
+function residentialReq(opts, body) {
+  return new Promise((resolve, reject) => {
+    const proxy = getResidentialProxy();
+    if (!proxy) return reject(new Error('BD_PROXY_USER/BD_PROXY_HOST nao configurados'));
+    const tgt = new url_mod.URL(opts.url);
+    const isHttps = tgt.protocol === 'https:';
+    const conn = http.request({
+      host: proxy.host, port: proxy.port, method: 'CONNECT',
+      path: `${tgt.hostname}:${isHttps ? 443 : 80}`,
+      headers: {
+        'Proxy-Authorization': 'Basic ' + Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64'),
+        'Host': tgt.hostname,
+      },
+    });
+    conn.setTimeout(12000);
+    conn.on('error', reject);
+    conn.on('timeout', () => { conn.destroy(); reject(new Error('CONNECT timeout')); });
+    conn.on('connect', (res, sock) => {
+      if (res.statusCode !== 200) { sock.destroy(); return reject(new Error('Proxy ' + res.statusCode)); }
+      const ro = { host: tgt.hostname, port: isHttps ? 443 : 80, path: tgt.pathname + tgt.search, method: opts.method || 'GET', headers: opts.headers || {}, socket: sock, agent: false };
+      if (isHttps) ro.servername = tgt.hostname;
+      const r = (isHttps ? https : http).request(ro);
+      r.setTimeout(18000);
+      r.on('error', reject);
+      r.on('timeout', () => { r.destroy(); reject(new Error('Request timeout')); });
+      r.on('response', resp => {
+        const chunks = [];
+        resp.on('data', c => chunks.push(c));
+        resp.on('end', () => {
+          const raw = Buffer.concat(chunks).toString('utf8');
+          try { resolve({ status: resp.statusCode, data: JSON.parse(raw), headers: resp.headers, raw }); }
+          catch { resolve({ status: resp.statusCode, data: {}, headers: resp.headers, raw }); }
+        });
+        resp.on('error', reject);
+      });
+      if (body) r.write(body);
+      r.end();
+    });
+    conn.end();
+  });
+}
+
 // ════════════════════════════════════════════════════════════
 // 🖥️ HTTP SERVER v13 — 2500+ ENDPOINTS ELÁSTICOS
 // ════════════════════════════════════════════════════════════
@@ -2196,15 +2250,18 @@ http.createServer(async (req, res) => {
     const d = await readBody();
     if (!d.url) { res.writeHead(400); return res.end(JSON.stringify({ error: 'url obrigatorio' })); }
     try {
-      const hdrs = d.headers || {};
-      const proxyResp = await proxyReq({ url: d.url, method: d.method||'GET', headers: {
+      const hdrs = {
         'User-Agent': rnd(UA_DESKTOP),
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'pt-BR,pt;q=0.9',
         'Referer': 'https://shopee.com.br/',
         'Origin': 'https://shopee.com.br',
-        ...hdrs,
-      }}, d.body||undefined);
+        ...(d.headers||{}),
+      };
+      // Usa proxy residencial se disponível, senão usa BD proxy (browser zone)
+      const useResidential = !!getResidentialProxy();
+      const proxyFn = useResidential ? residentialReq : proxyReq;
+      const proxyResp = await proxyFn({ url: d.url, method: d.method||'GET', headers: hdrs }, d.body||undefined);
       res.writeHead(proxyResp.status);
       return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0,2000) }));
     } catch(e) {
