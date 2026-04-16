@@ -1454,17 +1454,19 @@ const FP_PROFILES = [
 const rndFP = () => FP_PROFILES[Math.floor(Math.random() * FP_PROFILES.length)];
 
 // ── CDP HELPER ────────────────────────────────────────────────
-class CDPSession {
+class CDPBrowser {
   constructor(ws) {
     this.ws = ws;
     this.id = 1;
-    this.pending = new Map();
+    this.pending = new Map(); // key = "sessionId:msgId" or ":msgId"
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (msg.id && this.pending.has(msg.id)) {
-          const { resolve, reject } = this.pending.get(msg.id);
-          this.pending.delete(msg.id);
+        if (!msg.id) return;
+        const key = `${msg.sessionId||''}:${msg.id}`;
+        if (this.pending.has(key)) {
+          const { resolve, reject } = this.pending.get(key);
+          this.pending.delete(key);
           if (msg.error) reject(new Error(msg.error.message || JSON.stringify(msg.error)));
           else resolve(msg.result);
         }
@@ -1476,22 +1478,42 @@ class CDPSession {
     });
   }
 
+  // Envia comando no nível browser (sem sessionId)
   send(method, params={}) {
     return new Promise((resolve, reject) => {
       const id = this.id++;
-      this.pending.set(id, { resolve, reject });
+      const key = `:${id}`;
+      this.pending.set(key, { resolve, reject });
       this.ws.send(JSON.stringify({ id, method, params }));
       setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`CDP timeout: ${method}`));
-        }
+        if (this.pending.has(key)) { this.pending.delete(key); reject(new Error(`CDP timeout: ${method}`)); }
       }, 20000);
     });
   }
 
+  // Cria sessão flat para um target
+  session(sessionId) {
+    const browser = this;
+    return {
+      send(method, params={}) {
+        return new Promise((resolve, reject) => {
+          const id = browser.id++;
+          const key = `${sessionId}:${id}`;
+          browser.pending.set(key, { resolve, reject });
+          browser.ws.send(JSON.stringify({ id, method, params, sessionId }));
+          setTimeout(() => {
+            if (browser.pending.has(key)) { browser.pending.delete(key); reject(new Error(`CDP timeout: ${method}`)); }
+          }, 20000);
+        });
+      },
+      close() { try { browser.ws.close(); } catch(e) {} }
+    };
+  }
+
   close() { try { this.ws.close(); } catch(e) {} }
 }
+// Alias para compatibilidade
+const CDPSession = CDPBrowser;
 
 // ── NÍVEL 3: injeta fingerprint completo na página ────────────
 async function injectFingerprint(cdp, fp) {
@@ -1691,20 +1713,46 @@ async function refreshWithBrowser(cookies, feSession) {
     setTimeout(() => reject(new Error('WS connect timeout')), 20000);
   });
 
-  const cdp = new CDPSession(ws);
-  console.log('[browser] CDP conectado ao Bright Data');
+  const cdp = new CDPBrowser(ws);
+  console.log('[browser] CDP browser conectado ao Bright Data');
+
+  // ── Cria/obtém target e sessão flat ──────────────────────────
+  let sessionCdp = cdp; // fallback
+  try {
+    // Obtém targets existentes
+    const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
+    console.log(`[browser] targets: ${(targetInfos||[]).length}`);
+
+    let targetId;
+    const page = (targetInfos||[]).find(t => t.type === 'page' || t.type === 'other');
+    if (page) {
+      targetId = page.targetId;
+      console.log('[browser] target existente:', targetId.slice(0,8));
+    } else {
+      const { targetId: newId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+      targetId = newId;
+      console.log('[browser] novo target:', targetId.slice(0,8));
+    }
+
+    // Attach com flatten=true para sessão CDP no target
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    sessionCdp = cdp.session(sessionId);
+    console.log('[browser] sessão flat criada:', sessionId.slice(0,8));
+  } catch(e) {
+    console.log('[browser] target setup:', e.message.slice(0,60), '— usando browser session');
+  }
 
   try {
     // ── Habilita domains que BD suporta ──────────────────────
-    await cdp.send('Network.enable', {}).catch(e => console.log('[browser] Network.enable:', e.message));
-    await cdp.send('Page.enable', {}).catch(e => console.log('[browser] Page.enable:', e.message));
+    await sessionCdp.send('Network.enable', {}).catch(e => console.log('[browser] Network.enable:', e.message));
+    await sessionCdp.send('Page.enable', {}).catch(e => console.log('[browser] Page.enable:', e.message));
 
     // ── Seta cookies da sessão do seller ─────────────────────
     const jar = parseCookies(cookies);
     let cookiesSet = 0;
     for (const [name, value] of Object.entries(jar)) {
       try {
-        await cdp.send('Network.setCookie', {
+        await sessionCdp.send('Network.setCookie', {
           name, value,
           domain: '.shopee.com.br',
           path: '/',
@@ -1717,7 +1765,7 @@ async function refreshWithBrowser(cookies, feSession) {
     console.log(`[browser] ${cookiesSet} cookies setados`);
 
     // ── Navega para Seller Center ─────────────────────────────
-    await cdp.send('Page.navigate', { url: 'https://seller.shopee.com.br/portal/product/list/all' });
+    await sessionCdp.send('Page.navigate', { url: 'https://seller.shopee.com.br/portal/product/list/all' });
 
     // Aguarda carregamento
     await new Promise((resolve) => {
@@ -1766,7 +1814,7 @@ async function refreshWithBrowser(cookies, feSession) {
           }
         })();
       `;
-      await cdp.send('Runtime.evaluate', { expression: fpScript, returnByValue: false });
+      await sessionCdp.send('Runtime.evaluate', { expression: fpScript, returnByValue: false });
       console.log('[browser] fingerprint L3 injetado via Runtime');
     } catch(e) {
       console.log('[browser] Runtime.evaluate fingerprint:', e.message.slice(0,50));
@@ -1774,16 +1822,16 @@ async function refreshWithBrowser(cookies, feSession) {
 
     // ── Simula scroll humano via Runtime ─────────────────────
     try {
-      await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*200)', returnByValue: false });
+      await sessionCdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*200)', returnByValue: false });
       await new Promise(r => setTimeout(r, 800 + Math.random() * 1200));
-      await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*400)', returnByValue: false });
+      await sessionCdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*400)', returnByValue: false });
     } catch(e) {}
 
     // ── Aguarda requests de background ───────────────────────
     await new Promise(r => setTimeout(r, 2500 + Math.random() * 1500));
 
     // ── Captura cookies atualizados ───────────────────────────
-    const { cookies: newCdpCookies } = await cdp.send('Network.getAllCookies', {});
+    const { cookies: newCdpCookies } = await sessionCdp.send('Network.getAllCookies', {});
     const shopeeNewCookies = (newCdpCookies || [])
       .filter(c => c.domain && (c.domain.includes('shopee.com.br') || c.domain.includes('.shopee')))
       .map(c => `${c.name}=${c.value}`);
@@ -1801,7 +1849,7 @@ async function refreshWithBrowser(cookies, feSession) {
     let sessionOk = true;
     try {
       const spcCds = getCookieVal(mergedCookies, 'SPC_CDS');
-      const result = await cdp.send('Runtime.evaluate', {
+      const result = await sessionCdp.send('Runtime.evaluate', {
         expression: `fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify({code:d.code,errcode:d.errcode,name:d.data&&d.data.shop_name})).catch(e=>JSON.stringify({error:e.message}))`,
         awaitPromise: true, timeout: 10000,
       });
@@ -1815,7 +1863,7 @@ async function refreshWithBrowser(cookies, feSession) {
       console.log('[browser] validação skip:', e.message.slice(0,40));
     }
 
-    cdp.close();
+    sessionCdp.close();
     return {
       ok: sessionOk,
       expired: !sessionOk,
@@ -1827,7 +1875,7 @@ async function refreshWithBrowser(cookies, feSession) {
     };
 
   } catch(e) {
-    cdp.close();
+    sessionCdp.close();
     throw e;
   }
 }
