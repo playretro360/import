@@ -2106,6 +2106,28 @@ http.createServer(async (req, res) => {
     }
   }
 
+
+  if (req.method === 'POST' && p === '/fetch-url') {
+    const d = await readBody();
+    if (!d.url) { res.writeHead(400); return res.end(JSON.stringify({ error: 'url obrigatorio' })); }
+    try {
+      const hdrs = d.headers || {};
+      const r = await req({ url: d.url, method: d.method||'GET', headers: {
+        'User-Agent': rnd(UA_DESKTOP),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+        'Referer': 'https://shopee.com.br/',
+        'Origin': 'https://shopee.com.br',
+        ...hdrs,
+      }}, d.body||undefined);
+      res.writeHead(r.status);
+      return res.end(JSON.stringify({ status: r.status, data: r.data, raw: r.raw?.slice(0,2000) }));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Not found' }));
 
