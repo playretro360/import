@@ -2123,8 +2123,9 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.0.0',
+      ok: true, service: 'vendry-sync', version: '14.1.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
+      residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       endpoints_total: epStats.total,
       generated_eps: {
         seller_center: epStats.seller_center,
