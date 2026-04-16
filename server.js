@@ -2112,6 +2112,51 @@ function residentialReq(opts, body) {
   });
 }
 
+
+// ── WEB UNLOCKER API (para sites bloqueados como Shopee) ─────────────────
+function getUnlockerKey() {
+  return process.env.BD_UNLOCKER_KEY || '';
+}
+
+function unlockerReq(targetUrl, zone) {
+  return new Promise((resolve, reject) => {
+    const key = getUnlockerKey();
+    if (!key) return reject(new Error('BD_UNLOCKER_KEY nao configurado'));
+    const body = JSON.stringify({
+      zone: zone || 'web_unlocker1',
+      url: targetUrl,
+      format: 'raw',
+    });
+    const opts = {
+      hostname: 'api.brightdata.com',
+      port: 443,
+      path: '/request',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+    const r = https.request(opts);
+    r.setTimeout(25000);
+    r.on('error', reject);
+    r.on('timeout', () => { r.destroy(); reject(new Error('Unlocker timeout')); });
+    r.on('response', resp => {
+      const chunks = [];
+      resp.on('data', c => chunks.push(c));
+      resp.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try { resolve({ status: resp.statusCode, data: JSON.parse(raw), raw }); }
+        catch { resolve({ status: resp.statusCode, data: {}, raw }); }
+      });
+      resp.on('error', reject);
+    });
+    r.write(body);
+    r.end();
+  });
+}
+
 // ════════════════════════════════════════════════════════════
 // 🖥️ HTTP SERVER v13 — 2500+ ENDPOINTS ELÁSTICOS
 // ════════════════════════════════════════════════════════════
@@ -2136,9 +2181,10 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.1.0',
+      ok: true, service: 'vendry-sync', version: '14.3.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
+      unlocker: getUnlockerKey() ? 'configured' : 'not configured',
       endpoints_total: epStats.total,
       generated_eps: {
         seller_center: epStats.seller_center,
@@ -2273,8 +2319,9 @@ http.createServer(async (req, res) => {
         ...(d.headers||{}),
       };
       // Usa proxy residencial se disponível, senão usa BD proxy (browser zone)
-      const useResidential = !!getResidentialProxy();
-      const proxyFn = useResidential ? residentialReq : proxyReq;
+      const useUnlocker = !!getUnlockerKey();
+      const useResidential = !useUnlocker && !!getResidentialProxy();
+      const proxyFn = useUnlocker ? (o) => unlockerReq(o.url) : (useResidential ? residentialReq : proxyReq);
       const proxyResp = await proxyFn({ url: d.url, method: d.method||'GET', headers: hdrs }, d.body||undefined);
       res.writeHead(proxyResp.status);
       return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0,2000) }));
