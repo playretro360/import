@@ -1977,6 +1977,74 @@ async function refreshCookies(cookies, feSession) {
 }
 
 
+
+// ── SEARCH VIA BROWSER CDP (fallback quando proxy HTTP falha) ─────────────
+async function searchViaBrowser(shopid, limit, offset) {
+  const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+    setTimeout(() => reject(new Error('WS timeout')), 20000);
+  });
+
+  const cdp = new CDPBrowser(ws);
+  let sessionCdp = cdp;
+
+  try {
+    // Cria target
+    const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
+    const page = (targetInfos||[]).find(t => t.type === 'page');
+    let targetId;
+    if (page) {
+      targetId = page.targetId;
+    } else {
+      const { targetId: newId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+      targetId = newId;
+    }
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    sessionCdp = cdp.session(sessionId);
+
+    await sessionCdp.send('Network.enable', {}).catch(()=>{});
+    await sessionCdp.send('Page.enable', {}).catch(()=>{});
+
+    // Navega para a Shopee
+    await sessionCdp.send('Page.navigate', { url: `https://shopee.com.br/` });
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Faz o fetch de dentro do browser (IP residencial)
+    const urls = [
+      `https://shopee.com.br/api/v4/search/search_items?by=pop&limit=${limit}&newest=${offset}&order=desc&page_type=shop&scenario=PAGE_OTHERS&shopid=${shopid}&version=2`,
+      `https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=${limit}&offset=${offset}&shopid=${shopid}&sort_type=1`,
+    ];
+
+    for (const searchUrl of urls) {
+      try {
+        const result = await sessionCdp.send('Runtime.evaluate', {
+          expression: `fetch('${searchUrl}',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify(d)).catch(e=>JSON.stringify({error:e.message}))`,
+          awaitPromise: true,
+          timeout: 12000,
+        });
+        const data = JSON.parse(result.result?.value || '{}');
+        let items = data.items || [];
+        if (!items.length) {
+          const sec = data?.data?.sections?.[0]?.data;
+          if (sec?.item?.length) items = sec.item;
+        }
+        if (items.length > 0) {
+          cdp.close();
+          return items;
+        }
+      } catch(e) {}
+    }
+
+    cdp.close();
+    return [];
+  } catch(e) {
+    cdp.close();
+    throw e;
+  }
+}
+
 // ════════════════════════════════════════════════════════════
 // 🖥️ HTTP SERVER v13 — 2500+ ENDPOINTS ELÁSTICOS
 // ════════════════════════════════════════════════════════════
@@ -2066,9 +2134,26 @@ http.createServer(async (req, res) => {
     const d = await readBody();
     if (!d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'shopid obrigatorio' })); }
     try {
+      // Tenta via searchPublic (proxy HTTP) primeiro
       const r = await searchPublic(d.shopid, d.cookies||'', d.limit||20, d.offset||0);
-      res.writeHead(r.ok?200:503);
-      return res.end(JSON.stringify(r));
+      if (r.ok && r.items && r.items.length > 0) {
+        res.writeHead(200);
+        return res.end(JSON.stringify(r));
+      }
+      // Fallback: usa browser CDP (IP residencial) para fazer o fetch
+      if (BD_WSS) {
+        try {
+          const items = await searchViaBrowser(d.shopid, d.limit||20, d.offset||0);
+          if (items && items.length > 0) {
+            res.writeHead(200);
+            return res.end(JSON.stringify({ ok: true, items, total: items.length, source: 'browser_cdp' }));
+          }
+        } catch(eBrowser) {
+          console.log('[search-public] browser fallback erro:', eBrowser.message.slice(0,60));
+        }
+      }
+      res.writeHead(503);
+      return res.end(JSON.stringify({ ok: false, error: 'Nenhum produto encontrado', items: [] }));
     } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok:false, error:e.message, items:[] })); }
   }
 
