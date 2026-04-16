@@ -1979,7 +1979,7 @@ async function refreshCookies(cookies, feSession) {
 
 
 // ── SEARCH VIA BROWSER CDP (fallback quando proxy HTTP falha) ─────────────
-async function searchViaBrowser(shopid, limit, offset) {
+async function searchViaBrowser(shopid, limit, offset, cookies) {
   const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
   await new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -1988,61 +1988,54 @@ async function searchViaBrowser(shopid, limit, offset) {
   });
 
   const cdp = new CDPBrowser(ws);
-  let sessionCdp = cdp;
-
   try {
-    // Cria target
     const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
     const page = (targetInfos||[]).find(t => t.type === 'page');
     let targetId;
-    if (page) {
-      targetId = page.targetId;
-    } else {
-      const { targetId: newId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
-      targetId = newId;
-    }
+    if (page) { targetId = page.targetId; }
+    else { const r = await cdp.send('Target.createTarget', { url: 'about:blank' }); targetId = r.targetId; }
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-    sessionCdp = cdp.session(sessionId);
+    const s = cdp.session(sessionId);
 
-    await sessionCdp.send('Network.enable', {}).catch(()=>{});
-    await sessionCdp.send('Page.enable', {}).catch(()=>{});
+    await s.send('Network.enable', {}).catch(()=>{});
 
-    // Navega para a Shopee
-    await sessionCdp.send('Page.navigate', { url: `https://shopee.com.br/` });
-    await new Promise(r => setTimeout(r, 3000));
+    // Injeta cookies da Shopee se disponíveis
+    if (cookies) {
+      const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
+      const cookieList = cookiePairs.map(cp => {
+        const eq = cp.indexOf('=');
+        return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.shopee.com.br', path: '/' };
+      }).filter(c => c.name && c.value);
+      if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
+    }
 
-    // Faz o fetch de dentro do browser (IP residencial)
-    const urls = [
+    // Navega pro about:blank com referer da Shopee (mais rápido que carregar a home)
+    await s.send('Page.navigate', { url: 'https://shopee.com.br/favicon.ico' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 1500));
+
+    const searchUrls = [
       `https://shopee.com.br/api/v4/search/search_items?by=pop&limit=${limit}&newest=${offset}&order=desc&page_type=shop&scenario=PAGE_OTHERS&shopid=${shopid}&version=2`,
       `https://shopee.com.br/api/v4/recommend/recommend?bundle=shop_page_product_tab_main&limit=${limit}&offset=${offset}&shopid=${shopid}&sort_type=1`,
+      `https://shopee.com.br/api/v4/shop/get_shop_all_item_list?need_filter_bar=true&offset=${offset}&limit=${limit}&shopid=${shopid}&filter_id=0&sort_by=pop`,
     ];
 
-    for (const searchUrl of urls) {
+    for (const searchUrl of searchUrls) {
       try {
-        const result = await sessionCdp.send('Runtime.evaluate', {
-          expression: `fetch('${searchUrl}',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify(d)).catch(e=>JSON.stringify({error:e.message}))`,
+        const result = await s.send('Runtime.evaluate', {
+          expression: `(async()=>{const r=await fetch(${JSON.stringify(searchUrl)},{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','Referer':'https://shopee.com.br/'}});const d=await r.json();return JSON.stringify(d);})()`,
           awaitPromise: true,
-          timeout: 12000,
+          timeout: 15000,
         });
         const data = JSON.parse(result.result?.value || '{}');
         let items = data.items || [];
-        if (!items.length) {
-          const sec = data?.data?.sections?.[0]?.data;
-          if (sec?.item?.length) items = sec.item;
-        }
-        if (items.length > 0) {
-          cdp.close();
-          return items;
-        }
+        if (!items.length) { const sec = data?.data?.sections?.[0]?.data; if (sec?.item?.length) items = sec.item; }
+        if (!items.length) { const dd = data?.data||{}; items = dd.items||dd.item_list||dd.item||[]; }
+        if (items.length > 0) { cdp.close(); return items; }
       } catch(e) {}
     }
-
     cdp.close();
     return [];
-  } catch(e) {
-    cdp.close();
-    throw e;
-  }
+  } catch(e) { cdp.close(); throw e; }
 }
 
 
@@ -2181,7 +2174,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.3.0',
+      ok: true, service: 'vendry-sync', version: '14.4.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2248,23 +2241,23 @@ http.createServer(async (req, res) => {
     const d = await readBody();
     if (!d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'shopid obrigatorio' })); }
     try {
-      // Tenta via searchPublic (proxy HTTP) primeiro
-      const r = await searchPublic(d.shopid, d.cookies||'', d.limit||20, d.offset||0);
-      if (r.ok && r.items && r.items.length > 0) {
-        res.writeHead(200);
-        return res.end(JSON.stringify(r));
-      }
-      // Fallback: usa browser CDP (IP residencial) para fazer o fetch
+      // Estratégia 1: browser CDP (única que funciona com Shopee)
       if (BD_WSS) {
         try {
-          const items = await searchViaBrowser(d.shopid, d.limit||20, d.offset||0);
+          const items = await searchViaBrowser(d.shopid, d.limit||20, d.offset||0, d.cookies||'');
           if (items && items.length > 0) {
             res.writeHead(200);
             return res.end(JSON.stringify({ ok: true, items, total: items.length, source: 'browser_cdp' }));
           }
         } catch(eBrowser) {
-          console.log('[search-public] browser fallback erro:', eBrowser.message.slice(0,60));
+          console.log('[search-public] browser erro:', eBrowser.message.slice(0,80));
         }
+      }
+      // Estratégia 2: proxy HTTP (fallback)
+      const r = await searchPublic(d.shopid, d.cookies||'', d.limit||20, d.offset||0);
+      if (r.ok && r.items && r.items.length > 0) {
+        res.writeHead(200);
+        return res.end(JSON.stringify(r));
       }
       res.writeHead(503);
       return res.end(JSON.stringify({ ok: false, error: 'Nenhum produto encontrado', items: [] }));
