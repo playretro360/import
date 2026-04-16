@@ -1999,7 +1999,7 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
 
     await s.send('Network.enable', {}).catch(()=>{});
 
-    // Injeta cookies da Shopee se disponíveis
+    // Injeta cookies da Shopee
     if (cookies) {
       const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
       const cookieList = cookiePairs.map(cp => {
@@ -2009,9 +2009,9 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
       if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
     }
 
-    // Navega pro about:blank com referer da Shopee (mais rápido que carregar a home)
-    await s.send('Page.navigate', { url: 'https://shopee.com.br/favicon.ico' }).catch(()=>{});
-    await new Promise(r => setTimeout(r, 1500));
+    // Navega pra Shopee sem esperar load completo (só precisa do contexto do domínio)
+    s.send('Page.navigate', { url: 'https://shopee.com.br/' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 2000));
 
     const searchUrls = [
       `https://shopee.com.br/api/v4/search/search_items?by=pop&limit=${limit}&newest=${offset}&order=desc&page_type=shop&scenario=PAGE_OTHERS&shopid=${shopid}&version=2`,
@@ -2174,7 +2174,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.4.0',
+      ok: true, service: 'vendry-sync', version: '14.5.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
