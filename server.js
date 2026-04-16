@@ -1989,15 +1989,6 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
 
   const cdp = new CDPBrowser(ws);
   try {
-    const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
-    const page = (targetInfos||[]).find(t => t.type === 'page');
-    let targetId;
-    if (page) { targetId = page.targetId; }
-    else { const r = await cdp.send('Target.createTarget', { url: 'about:blank' }); targetId = r.targetId; }
-    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
-    const s = cdp.session(sessionId);
-
-    await s.send('Network.enable', {}).catch(()=>{});
 
     // Injeta cookies da Shopee
     if (cookies) {
@@ -2009,16 +2000,31 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
       if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
     }
 
-    // about:blank é instantâneo — simula Origin da Shopee via CDP (bypassa CORS)
-    await s.send('Page.navigate', { url: 'about:blank' }).catch(()=>{});
-    await s.send('Network.setExtraHTTPHeaders', {
-      headers: {
-        'Origin': 'https://shopee.com.br',
-        'Referer': 'https://shopee.com.br/',
-        'x-api-source': 'pc',
-      }
-    }).catch(()=>{});
-    await new Promise(r => setTimeout(r, 500));
+    // Cria target JÁ no domínio shopee.com.br — fetch funciona sem CORS
+    // Não precisa carregar a página completamente
+    const newTarget = await cdp.send('Target.createTarget', {
+      url: 'https://shopee.com.br/',
+      newWindow: false,
+      background: true,
+    });
+    const newTargetId = newTarget.targetId;
+    const { sessionId: sid2 } = await cdp.send('Target.attachToTarget', { targetId: newTargetId, flatten: true });
+    const s = cdp.session(sid2);
+
+    await s.send('Network.enable', {}).catch(()=>{});
+
+    // Injeta cookies
+    if (cookies) {
+      const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
+      const cookieList = cookiePairs.map(cp => {
+        const eq = cp.indexOf('=');
+        return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.shopee.com.br', path: '/' };
+      }).filter(c => c.name && c.value);
+      if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
+    }
+
+    // Aguarda só 1s pra o JS context inicializar (não precisa do page load completo)
+    await new Promise(r => setTimeout(r, 1000));
 
     const searchUrls = [
       `https://shopee.com.br/api/v4/search/search_items?by=pop&limit=${limit}&newest=${offset}&order=desc&page_type=shop&scenario=PAGE_OTHERS&shopid=${shopid}&version=2`,
@@ -2181,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.6.0',
+      ok: true, service: 'vendry-sync', version: '14.7.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
