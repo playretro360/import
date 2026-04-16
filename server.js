@@ -1114,7 +1114,7 @@ async function searchPublic(shopid, cookies, limit, offset) {
 
   const mobile = false;
   for (const ep of ordered) {
-    if (!open(ep.name)) continue;
+    if (open(ep.name)) continue; // pula se circuit breaker aberto (quebrado)
     try {
       const r = await req({ url: ep.url, method:'GET', headers: buyerHeaders(cookies, mobile) });
       const parsed = parseSearchResult(r.data);
