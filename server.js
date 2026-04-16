@@ -312,7 +312,7 @@ let bestEp=null, lastTime=0, lastCount=0;
 // ════════════════════════════════════════════════════════════
 // 🌐 PROXY REQUEST
 // ════════════════════════════════════════════════════════════
-function req(opts, body) {
+function proxyReq(opts, body) {
   return new Promise((resolve,reject)=>{
     const proxy=getProxy();
     if(!proxy) return reject(new Error('Proxy nao configurado'));
@@ -531,7 +531,7 @@ async function syncV10(cookies, feSession, spcCds) {
       while (pages < 25) {
         const u = ep.buildUrl ? ep.buildUrl(cursor, offset) : ep.url;
         const b = ep.buildBody ? ep.buildBody(offset) : null;
-        const r = await req({ url: u, method: ep.method || 'GET', headers: ep.headers || {} }, b);
+        const r = await proxyReq({ url: u, method: ep.method || 'GET', headers: ep.headers || {} }, b);
 
         const x = ep.extract(r.data);
         const items = (x.items || []).map(normalize).filter(Boolean);
@@ -1116,7 +1116,7 @@ async function searchPublic(shopid, cookies, limit, offset) {
   for (const ep of ordered) {
     if (open(ep.name)) continue; // pula se circuit breaker aberto (quebrado)
     try {
-      const r = await req({ url: ep.url, method:'GET', headers: buyerHeaders(cookies, mobile) });
+      const r = await proxyReq({ url: ep.url, method:'GET', headers: buyerHeaders(cookies, mobile) });
       const parsed = parseSearchResult(r.data);
       if (parsed?.items?.length > 0) {
         win(ep.name); recordEndpointResult(ep.name, RESPONSE_TYPES.OK, parsed.items.length); addResult(RESPONSE_TYPES.OK);
@@ -1203,7 +1203,7 @@ async function getOrders(cookies, feSession, spcCds) {
           try {
             const url=`${SB}/api/v${v}/${path}?${SC}`;
             const body=buildOrderBody(t.tab, t.sub, page, 40);
-            const r=await req({url, method:'POST', headers:sellerHeaders(cookies,feSession)}, body);
+            const r=await proxyReq({url, method:'POST', headers:sellerHeaders(cookies,feSession)}, body);
             const list=r.data?.data?.index_list||r.data?.data?.order_list||r.data?.data?.list||r.data?.data?.orders||[];
             if (r.data?.code===0 && list.length===0) { win(ename); got=true; break; }
             if (list.length>0) {
@@ -1234,7 +1234,7 @@ async function getOrders(cookies, feSession, spcCds) {
               const url=`${SB}/api/v${v}/${path}?${SC}`;
               const body=JSON.stringify({order_list_tab:t.tab,need_count_down_desc:false,
                 package_param_list:batch.map(o=>({package_number:o.package_number||'',order_id:o.order_id||0,shop_id:o.shop_id||shopId,region_id:'BR'}))});
-              const r=await req({url,method:'POST',headers:sellerHeaders(cookies,feSession)},body);
+              const r=await proxyReq({url,method:'POST',headers:sellerHeaders(cookies,feSession)},body);
               const cards=r.data?.data?.card_list||r.data?.data?.cards||r.data?.data?.list||[];
               if (cards.length>0) {
                 win(ename); recordEndpointResult(ename,RESPONSE_TYPES.OK,cards.length); addResult(RESPONSE_TYPES.OK);
@@ -1355,7 +1355,7 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
       const ename=`lbl-url-v${v}-${p.split('?')[0].replace(/\//g,'-').slice(0,25)}`;
       if(!open(ename)) continue;
       try {
-        const r=await req({url:`${SB}/api/v${v}/${p}`,method:'GET',headers:hdrs});
+        const r=await proxyReq({url:`${SB}/api/v${v}/${p}`,method:'GET',headers:hdrs});
         const pdfUrl=deepUrl(r.data,f);
         if(pdfUrl){
           const pr=await reqBinary({url:pdfUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
@@ -1379,12 +1379,12 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
       const ename=`lbl-job-v${v}-${jc.create.split('?')[0].replace(/\//g,'-').slice(0,25)}`;
       if(!open(ename)) continue;
       try {
-        const cr=await req({url:`${SB}/api/v${v}/${jc.create}`,method:'POST',headers:hdrs},JSON.stringify(jc.body));
+        const cr=await proxyReq({url:`${SB}/api/v${v}/${jc.create}`,method:'POST',headers:hdrs},JSON.stringify(jc.body));
         const jobId=cr.data?.data?.job_id||cr.data?.job_id;
         if(jobId){
           for(let poll=0;poll<6;poll++){
             await new Promise(r=>setTimeout(r,1500));
-            const sr=await req({url:`${SB}/api/v${v}/${jc.status}&job_id=${jobId}`,method:'GET',headers:hdrs});
+            const sr=await proxyReq({url:`${SB}/api/v${v}/${jc.status}&job_id=${jobId}`,method:'GET',headers:hdrs});
             const fileUrl=sr.data?.data?.file_list?.[0]?.url||sr.data?.data?.pdf_url||sr.data?.data?.url;
             if(fileUrl){
               const pr=await reqBinary({url:fileUrl,method:'GET',headers:{'User-Agent':hdrs['user-agent']}});
@@ -1399,7 +1399,7 @@ async function getLabel(cookies, feSession, spcCds, orderSn, pkgNumber, channelI
 
   // HTML FALLBACK
   try {
-    const r=await req({url:`${SB}/awbprint?order_sn=${encodeURIComponent(orderSn)}&first_time=1&lang=pt-br`,method:'GET',headers:hdrs});
+    const r=await proxyReq({url:`${SB}/awbprint?order_sn=${encodeURIComponent(orderSn)}&first_time=1&lang=pt-br`,method:'GET',headers:hdrs});
     if(r.raw?.includes('<html'))return{ok:true,html:r.raw,method:'lbl-html-fallback'};
   } catch(e){}
 
@@ -1938,7 +1938,7 @@ async function refreshCookies(cookies, feSession) {
           'x-csrftoken': csrftoken,
           'sc-fe-ver': '21.143762',
         });
-        const r = await req({ url, method: 'POST', headers: hdrs },
+        const r = await proxyReq({ url, method: 'POST', headers: hdrs },
           JSON.stringify({ refresh_token: spcRTId, iv: spcRTIv }));
         const setCookies = Array.isArray(r.headers['set-cookie'])
           ? r.headers['set-cookie']
@@ -1957,7 +1957,7 @@ async function refreshCookies(cookies, feSession) {
   const spcCds = getCookie(cookies, 'SPC_CDS');
   try {
     const hdrs = H(cookies, feSession, { 'sc-fe-ver': '21.143762' });
-    const r = await req({ url: `https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${spcCds}&SPC_CDS_VER=2`, method: 'GET', headers: hdrs });
+    const r = await proxyReq({ url: `https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${spcCds}&SPC_CDS_VER=2`, method: 'GET', headers: hdrs });
     const expired = r.data?.errcode === 2 || r.data?.code === 2 || r.status === 401;
     if (expired) {
       console.log('[refresh] ❌ sessão expirada confirmada');
@@ -2112,7 +2112,7 @@ http.createServer(async (req, res) => {
     if (!d.url) { res.writeHead(400); return res.end(JSON.stringify({ error: 'url obrigatorio' })); }
     try {
       const hdrs = d.headers || {};
-      const r = await req({ url: d.url, method: d.method||'GET', headers: {
+      const proxyResp = await proxyReq({ url: d.url, method: d.method||'GET', headers: {
         'User-Agent': rnd(UA_DESKTOP),
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'pt-BR,pt;q=0.9',
@@ -2120,8 +2120,8 @@ http.createServer(async (req, res) => {
         'Origin': 'https://shopee.com.br',
         ...hdrs,
       }}, d.body||undefined);
-      res.writeHead(r.status);
-      return res.end(JSON.stringify({ status: r.status, data: r.data, raw: r.raw?.slice(0,2000) }));
+      res.writeHead(proxyResp.status);
+      return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0,2000) }));
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ error: e.message }));
