@@ -1681,61 +1681,48 @@ async function refreshWithBrowser(cookies, feSession) {
   if (!bdWss) throw new Error('BD_WSS nao configurado');
 
   const fp = rndFP();
-  console.log(`[browser] iniciando | fp=${fp.width}x${fp.height} tz=${fp.tz} gl=${fp.renderer.slice(0,20)}`);
+  console.log(`[browser] iniciando | fp=${fp.width}x${fp.height} tz=${fp.tz}`);
 
-  // Conecta ao Bright Data Scraping Browser via CDP
-  const ws = new WebSocket(bdWss, {
-    headers: { 'User-Agent': rnd(UA_DESKTOP) },
-    handshakeTimeout: 15000,
-  });
+  const ws = new WebSocket(bdWss, { handshakeTimeout: 20000 });
 
   await new Promise((resolve, reject) => {
     ws.once('open', resolve);
     ws.once('error', reject);
-    setTimeout(() => reject(new Error('WS connect timeout')), 15000);
+    setTimeout(() => reject(new Error('WS connect timeout')), 20000);
   });
 
   const cdp = new CDPSession(ws);
-  console.log('[browser] CDP conectado');
+  console.log('[browser] CDP conectado ao Bright Data');
 
   try {
-    // ── Setup: habilita domains essenciais ──────────────────────
-    await cdp.send('Network.enable', {}).catch(()=>{});
-    await cdp.send('Page.enable', {}).catch(()=>{});
-    // Emulation — alguns comandos podem não estar disponíveis no BD Browser
-    await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: fp.width, height: fp.height, deviceScaleFactor: fp.dpr, mobile: false,
-    }).catch(()=>{});
-    await cdp.send('Emulation.setTimezoneOverride', { timezoneId: fp.tz }).catch(()=>{});
-    await cdp.send('Emulation.setLocaleOverride', { locale: 'pt-BR' }).catch(()=>{});
-
-    // ── Nível 3: Fingerprint completo ────────────────────────
-    await injectFingerprint(cdp, fp);
-    console.log('[browser] fingerprint injetado');
+    // ── Habilita domains que BD suporta ──────────────────────
+    await cdp.send('Network.enable', {}).catch(e => console.log('[browser] Network.enable:', e.message));
+    await cdp.send('Page.enable', {}).catch(e => console.log('[browser] Page.enable:', e.message));
 
     // ── Seta cookies da sessão do seller ─────────────────────
     const jar = parseCookies(cookies);
-    const cookieObjs = Object.entries(jar).map(([name, value]) => ({
-      name, value,
-      domain: '.shopee.com.br',
-      path: '/',
-      secure: true,
-      httpOnly: false,
-      sameSite: 'Lax',
-    }));
-    for (const ck of cookieObjs) {
-      try { await cdp.send('Network.setCookie', ck); } catch(e) {}
+    let cookiesSet = 0;
+    for (const [name, value] of Object.entries(jar)) {
+      try {
+        await cdp.send('Network.setCookie', {
+          name, value,
+          domain: '.shopee.com.br',
+          path: '/',
+          secure: true,
+          httpOnly: false,
+        });
+        cookiesSet++;
+      } catch(e) {}
     }
-    console.log(`[browser] ${cookieObjs.length} cookies setados`);
+    console.log(`[browser] ${cookiesSet} cookies setados`);
 
     // ── Navega para Seller Center ─────────────────────────────
-    const navUrl = 'https://seller.shopee.com.br/portal/product/list/all';
-    await cdp.send('Page.navigate', { url: navUrl });
+    await cdp.send('Page.navigate', { url: 'https://seller.shopee.com.br/portal/product/list/all' });
 
-    // Aguarda carregamento (com timeout)
+    // Aguarda carregamento
     await new Promise((resolve) => {
       let done = false;
-      const timer = setTimeout(() => { done = true; resolve(); }, 12000);
+      const timer = setTimeout(() => { done = true; resolve(); }, 15000);
       cdp.ws.on('message', (data) => {
         if (done) return;
         try {
@@ -1748,49 +1735,84 @@ async function refreshWithBrowser(cookies, feSession) {
     });
     console.log('[browser] página carregada');
 
-    // ── Simula comportamento humano ───────────────────────────
-    await simulateHumanInteraction(cdp, fp);
+    // ── Nível 3: Fingerprint via Runtime.evaluate (funciona no BD) ──
+    try {
+      const fpScript = `
+        (function() {
+          // Canvas noise
+          const _toDataURL = HTMLCanvasElement.prototype.toDataURL;
+          HTMLCanvasElement.prototype.toDataURL = function(...a) {
+            const ctx = this.getContext('2d');
+            if (ctx) { const id = ctx.getImageData(0,0,1,1); id.data[0] = (id.data[0] + 1) % 256; ctx.putImageData(id,0,0); }
+            return _toDataURL.apply(this, a);
+          };
+          // WebGL
+          const _gp = WebGLRenderingContext.prototype.getParameter;
+          WebGLRenderingContext.prototype.getParameter = function(p) {
+            if (p === 37445) return '${fp.gl}';
+            if (p === 37446) return '${fp.renderer}';
+            return _gp.call(this, p);
+          };
+          // Headless patches
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+          window.chrome = window.chrome || { runtime: {} };
+          Object.defineProperty(document, 'hidden', { get: () => false });
+          Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+          // WebRTC
+          if (window.RTCPeerConnection) {
+            const _RTC = window.RTCPeerConnection;
+            window.RTCPeerConnection = function(c, ...r) { if(c) c.iceServers=[]; return new _RTC(c,...r); };
+            Object.assign(window.RTCPeerConnection, _RTC);
+          }
+        })();
+      `;
+      await cdp.send('Runtime.evaluate', { expression: fpScript, returnByValue: false });
+      console.log('[browser] fingerprint L3 injetado via Runtime');
+    } catch(e) {
+      console.log('[browser] Runtime.evaluate fingerprint:', e.message.slice(0,50));
+    }
 
-    // ── Aguarda Shopee processar auth (requisições de background) ─
-    await new Promise(r => setTimeout(r, 2000 + Math.random() * 1500));
+    // ── Simula scroll humano via Runtime ─────────────────────
+    try {
+      await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*200)', returnByValue: false });
+      await new Promise(r => setTimeout(r, 800 + Math.random() * 1200));
+      await cdp.send('Runtime.evaluate', { expression: 'window.scrollTo(0, Math.random()*400)', returnByValue: false });
+    } catch(e) {}
+
+    // ── Aguarda requests de background ───────────────────────
+    await new Promise(r => setTimeout(r, 2500 + Math.random() * 1500));
 
     // ── Captura cookies atualizados ───────────────────────────
     const { cookies: newCdpCookies } = await cdp.send('Network.getAllCookies', {});
-    const newCookies = (newCdpCookies || [])
-      .filter(c => c.domain.includes('shopee.com.br') || c.domain.includes('seller.shopee'))
+    const shopeeNewCookies = (newCdpCookies || [])
+      .filter(c => c.domain && (c.domain.includes('shopee.com.br') || c.domain.includes('.shopee')))
       .map(c => `${c.name}=${c.value}`);
 
-    if (newCookies.length === 0) throw new Error('Nenhum cookie capturado do browser');
+    console.log(`[browser] ${shopeeNewCookies.length} cookies Shopee capturados`);
 
-    // Merge: novos sobrescrevem os antigos
-    const mergedCookies = mergeCookiesObj(cookies, newCookies);
-    const newSpcCds = getCookieVal(mergedCookies, 'SPC_CDS');
-    const hasSession = !!newSpcCds && newSpcCds !== getCookieVal(cookies, 'SPC_CDS');
+    if (shopeeNewCookies.length === 0) {
+      cdp.close();
+      throw new Error('Nenhum cookie Shopee capturado — sessão pode ter expirado');
+    }
 
-    console.log(`[browser] ${newCookies.length} cookies capturados | SPC_CDS mudou: ${hasSession}`);
+    const mergedCookies = mergeCookiesObj(cookies, shopeeNewCookies);
 
-    // Verifica se sessão ainda é válida navegando uma API leve
+    // ── Valida sessão ─────────────────────────────────────────
     let sessionOk = true;
     try {
       const spcCds = getCookieVal(mergedCookies, 'SPC_CDS');
       const result = await cdp.send('Runtime.evaluate', {
-        expression: `
-          fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2', {
-            credentials: 'include'
-          }).then(r => r.json()).then(d => JSON.stringify({code: d.code, errcode: d.errcode})).catch(e => JSON.stringify({error: e.message}))
-        `,
-        awaitPromise: true,
-        timeout: 8000,
+        expression: `fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify({code:d.code,errcode:d.errcode,name:d.data&&d.data.shop_name})).catch(e=>JSON.stringify({error:e.message}))`,
+        awaitPromise: true, timeout: 10000,
       });
       const apiResult = JSON.parse(result.result?.value || '{}');
       if (apiResult.errcode === 2 || apiResult.code === 2) {
         sessionOk = false;
-        console.log('[browser] sessão ainda expirada após browser refresh');
-      } else {
-        console.log('[browser] sessão validada via API ✓');
+      } else if (apiResult.name) {
+        console.log(`[browser] sessão válida — loja: ${apiResult.name}`);
       }
     } catch(e) {
-      console.log('[browser] validação API falhou (não crítico):', e.message);
+      console.log('[browser] validação skip:', e.message.slice(0,40));
     }
 
     cdp.close();
@@ -1799,7 +1821,7 @@ async function refreshWithBrowser(cookies, feSession) {
       expired: !sessionOk,
       method: 'browser_l2l3',
       cookies: mergedCookies,
-      cookies_count: newCookies.length,
+      cookies_count: shopeeNewCookies.length,
       fingerprint: `${fp.width}x${fp.height} ${fp.tz}`,
       error: sessionOk ? undefined : 'Sessão expirada — reconecte via extensão',
     };
