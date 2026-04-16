@@ -1699,14 +1699,15 @@ async function refreshWithBrowser(cookies, feSession) {
   console.log('[browser] CDP conectado');
 
   try {
-    // ── Setup: viewport + UA ──────────────────────────────────
+    // ── Setup: habilita domains essenciais ──────────────────────
+    await cdp.send('Network.enable', {}).catch(()=>{});
+    await cdp.send('Page.enable', {}).catch(()=>{});
+    // Emulation — alguns comandos podem não estar disponíveis no BD Browser
     await cdp.send('Emulation.setDeviceMetricsOverride', {
       width: fp.width, height: fp.height, deviceScaleFactor: fp.dpr, mobile: false,
-    });
-    await cdp.send('Emulation.setTimezoneOverride', { timezoneId: fp.tz });
-    await cdp.send('Emulation.setLocaleOverride',   { locale: 'pt-BR' });
-    await cdp.send('Network.enable', {});
-    await cdp.send('Page.enable', {});
+    }).catch(()=>{});
+    await cdp.send('Emulation.setTimezoneOverride', { timezoneId: fp.tz }).catch(()=>{});
+    await cdp.send('Emulation.setLocaleOverride', { locale: 'pt-BR' }).catch(()=>{});
 
     // ── Nível 3: Fingerprint completo ────────────────────────
     await injectFingerprint(cdp, fp);
