@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.7.0',
+      ok: true, service: 'vendry-sync', version: '14.8.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2334,6 +2334,51 @@ http.createServer(async (req, res) => {
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+
+  if (req.method === 'POST' && p === '/product-detail') {
+    const d = await readBody();
+    if (!d.itemid || !d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'itemid e shopid obrigatorios' })); }
+    try {
+      const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
+      await new Promise((resolve, reject) => {
+        ws.once('open', resolve); ws.once('error', reject);
+        setTimeout(() => reject(new Error('WS timeout')), 20000);
+      });
+      const cdp = new CDPBrowser(ws);
+      try {
+        const newT = await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: false, background: true });
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: newT.targetId, flatten: true });
+        const s = cdp.session(sessionId);
+        await s.send('Network.enable', {}).catch(()=>{});
+        // Injeta cookies se fornecidos
+        if (d.cookies) {
+          const cl = d.cookies.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
+            const eq = cp.indexOf('=');
+            return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.shopee.com.br', path: '/' };
+          }).filter(c=>c.name&&c.value);
+          if (cl.length) await s.send('Network.setCookies', { cookies: cl }).catch(()=>{});
+        }
+        await s.send('Network.setExtraHTTPHeaders', { headers: { 'Origin': 'https://shopee.com.br', 'Referer': 'https://shopee.com.br/' } }).catch(()=>{});
+        const result = await s.send('Runtime.evaluate', {
+          expression: `(async()=>{ const r = await fetch('https://shopee.com.br/api/v4/item/get?itemid=${d.itemid}&shopid=${d.shopid}', {credentials:'include',headers:{'Accept':'application/json'}}); return JSON.stringify(await r.json()); })()`,
+          awaitPromise: true, timeout: 20000,
+        });
+        cdp.close();
+        const data = JSON.parse(result.result?.value || '{}');
+        const item = (data.data||{}).item || {};
+        if (item.name) {
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok: true, item }));
+        }
+        res.writeHead(404);
+        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado' }));
+      } catch(e) { cdp.close(); throw e; }
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
     }
   }
 
