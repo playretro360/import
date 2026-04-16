@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.8.0',
+      ok: true, service: 'vendry-sync', version: '14.9.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2353,6 +2353,7 @@ http.createServer(async (req, res) => {
         const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: newT.targetId, flatten: true });
         const s = cdp.session(sessionId);
         await s.send('Network.enable', {}).catch(()=>{});
+        await s.send('Network.setExtraHTTPHeaders', { headers: { 'Origin': 'https://shopee.com.br', 'Referer': 'https://shopee.com.br/', 'x-api-source': 'pc' } }).catch(()=>{});
         // Injeta cookies se fornecidos
         if (d.cookies) {
           const cl = d.cookies.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
@@ -2374,7 +2375,7 @@ http.createServer(async (req, res) => {
           return res.end(JSON.stringify({ ok: true, item }));
         }
         res.writeHead(404);
-        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado' }));
+        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado', debug: { keys: Object.keys(data||{}), dataKeys: Object.keys((data||{}).data||{}) } }));
       } catch(e) { cdp.close(); throw e; }
     } catch(e) {
       res.writeHead(500);
