@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.13.0',
+      ok: true, service: 'vendry-sync', version: '14.14.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2342,6 +2342,7 @@ http.createServer(async (req, res) => {
     const d = await readBody();
     if (!d.itemid || !d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'itemid e shopid obrigatorios' })); }
     try {
+      const apiUrl = 'https://shopee.com.br/api/v4/item/get?itemid=' + d.itemid + '&shopid=' + d.shopid;
       const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
       await new Promise((resolve, reject) => {
         ws.once('open', resolve); ws.once('error', reject);
@@ -2349,33 +2350,60 @@ http.createServer(async (req, res) => {
       });
       const cdp = new CDPBrowser(ws);
       try {
-        const newT = await cdp.send('Target.createTarget', { url: 'about:blank', newWindow: false, background: true });
-        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: newT.targetId, flatten: true });
+        const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
+        const existingPage = (targetInfos||[]).find(t => t.type === 'page');
+        let targetId;
+        if (existingPage) { targetId = existingPage.targetId; }
+        else { const nt = await cdp.send('Target.createTarget', { url: 'about:blank' }); targetId = nt.targetId; }
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
         const s = cdp.session(sessionId);
         await s.send('Network.enable', {}).catch(()=>{});
-        await s.send('Network.setExtraHTTPHeaders', { headers: { 'Origin': 'https://shopee.com.br', 'Referer': 'https://shopee.com.br/', 'x-api-source': 'pc' } }).catch(()=>{});
-        // Injeta cookies se fornecidos
+        await s.send('Page.enable', {}).catch(()=>{});
+
+        // Injeta cookies da Shopee antes de navegar
         if (d.cookies) {
           const cl = d.cookies.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
-            const eq = cp.indexOf('=');
+            const eq = cp.indexOf('='); if(eq<0) return null;
             return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.shopee.com.br', path: '/' };
-          }).filter(c=>c.name&&c.value);
-          if (cl.length) await s.send('Network.setCookies', { cookies: cl }).catch(()=>{});
+          }).filter(c=>c&&c.name&&c.value);
+          for(const ck of cl) { await s.send('Network.setCookie', ck).catch(()=>{}); }
         }
-        await s.send('Network.setExtraHTTPHeaders', { headers: { 'Origin': 'https://shopee.com.br', 'Referer': 'https://shopee.com.br/' } }).catch(()=>{});
-        const result = await s.send('Runtime.evaluate', {
-          expression: `(async()=>{ const r = await fetch('https://shopee.com.br/api/v4/item/get?itemid=${d.itemid}&shopid=${d.shopid}', {credentials:'include',headers:{'Accept':'application/json'}}); return JSON.stringify(await r.json()); })()`,
-          awaitPromise: true, timeout: 20000,
+
+        // Navega diretamente pra URL da API — browser envia cookies + IP residencial
+        await s.send('Page.navigate', { url: apiUrl });
+
+        // Aguarda loadEventFired
+        await new Promise((resolve) => {
+          let done = false;
+          const timer = setTimeout(() => { done = true; resolve(); }, 12000);
+          cdp.ws.on('message', (raw) => {
+            if (done) return;
+            try {
+              const msg = JSON.parse(raw.toString());
+              if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameStoppedLoading') {
+                clearTimeout(timer); done = true; resolve();
+              }
+            } catch(e) {}
+          });
         });
+
+        // Lê o body da página (JSON da API)
+        const bodyResult = await s.send('Runtime.evaluate', {
+          expression: 'document.body ? document.body.innerText : document.documentElement.innerText',
+          returnByValue: true,
+        }).catch(()=>({}));
         cdp.close();
-        const data = JSON.parse(result.result?.value || '{}');
+
+        const rawText = bodyResult?.result?.value || '';
+        let data = {};
+        try { data = JSON.parse(rawText); } catch(e) {}
         const item = (data.data||{}).item || {};
         if (item.name) {
           res.writeHead(200);
           return res.end(JSON.stringify({ ok: true, item }));
         }
         res.writeHead(404);
-        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado', debug: { keys: Object.keys(data||{}), dataKeys: Object.keys((data||{}).data||{}) } }));
+        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado', debug: { bodyPreview: rawText.slice(0,300) } }));
       } catch(e) { cdp.close(); throw e; }
     } catch(e) {
       res.writeHead(500);
