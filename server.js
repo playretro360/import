@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.22.0',
+      ok: true, service: 'vendry-sync', version: '14.23.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2420,144 +2420,92 @@ http.createServer(async (req, res) => {
 
   // ── /utimix-products — scrapa catálogo Utimix via BD Scraping Browser ──
   // ══════════════════════════════════════════════════════════════════
-  // /utimix-products — BD Browser IP residencial, sem cf_clearance
+  // /utimix-products — Proxy residencial BD direto + headers Chrome real
   // ══════════════════════════════════════════════════════════════════
   if (req.method === 'POST' && p === '/utimix-products') {
     const d = await readBody();
     const page_num = parseInt(d.page || '1');
     const per_page = parseInt(d.per_page || '20');
-    const wp_cookie = d.wp_cookie || ''; // wordpress_logged_in_* cookie
+    const wp_cookie = d.wp_cookie || '';
     const targetUrl = page_num > 1
       ? `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`
       : 'https://www.utimix.com/novidades/?orderby=date';
 
-    try {
-      const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
-      await new Promise((resolve, reject) => {
-        ws.once('open', resolve);
-        ws.once('error', reject);
-        setTimeout(() => reject(new Error('WS timeout')), 20000);
-      });
-      const cdp = new CDPBrowser(ws);
-
-      try {
-        const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
-        const ep = (targetInfos||[]).find(t => t.type === 'page');
-        let tId;
-        if (ep) { tId = ep.targetId; }
-        else { const nt = await cdp.send('Target.createTarget', { url: 'about:blank' }); tId = nt.targetId; }
-        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: tId, flatten: true });
-        const s = cdp.session(sessionId);
-        await s.send('Network.enable', {}).catch(()=>{});
-        await s.send('Page.enable', {}).catch(()=>{});
-
-        // Injeta só wordpress cookie (SEM cf_clearance — BD tem IP próprio)
-        if (wp_cookie) {
-          const cl = wp_cookie.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
-            const eq = cp.indexOf('='); if(eq<0) return null;
-            const nm = cp.slice(0,eq).trim(); const vl = cp.slice(eq+1).trim();
-            return nm && vl ? { name: nm, value: vl, domain: '.utimix.com', path: '/' } : null;
-          }).filter(Boolean);
-          for(const ck of cl) await s.send('Network.setCookie', ck).catch(()=>{});
-        }
-
-        // Passo 1: navega homepage — BD resolve Cloudflare challenge com seu IP
-        await s.send('Page.navigate', { url: 'https://www.utimix.com/' });
-        await new Promise(resolve => {
-          let done = false;
-          const t = setTimeout(() => { done=true; resolve(); }, 12000);
-          cdp.ws.on('message', raw => {
-            if (done) return;
-            try {
-              const msg = JSON.parse(raw.toString());
-              if (msg.method === 'Page.loadEventFired') { clearTimeout(t); done=true; resolve(); }
-            } catch(e) {}
-          });
+    // Usa proxy residencial BD via HTTPS CONNECT
+    async function fetchViaResidential(url, extraCookies) {
+      const proxy = getProxy();
+      if (!proxy) throw new Error('Proxy nao configurado');
+      const https = require('https'); const tls = require('tls'); const urlM = require('url');
+      const parsed = new urlM.URL(url);
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Residential timeout')), 20000);
+        const proxyAuth = Buffer.from(`${proxy.auth.username}:${proxy.auth.password}`).toString('base64');
+        const preq = https.request({
+          host: proxy.host, port: proxy.port, method: 'CONNECT',
+          path: `${parsed.hostname}:443`,
+          headers: { 'Proxy-Authorization': `Basic ${proxyAuth}`, 'Host': `${parsed.hostname}:443` }
         });
-
-        // Passo 2: navega pra página de produtos
-        await s.send('Page.navigate', { url: targetUrl });
-        await new Promise(resolve => {
-          let done = false;
-          const t = setTimeout(() => { done=true; resolve(); }, 15000);
-          cdp.ws.on('message', raw => {
-            if (done) return;
-            try {
-              const msg = JSON.parse(raw.toString());
-              if (msg.method === 'Page.loadEventFired') { clearTimeout(t); done=true; resolve(); }
-            } catch(e) {}
-          });
-        });
-
-        // Passo 3: lê o HTML renderizado
-        const br = await s.send('Runtime.evaluate', {
-          expression: 'document.body ? document.body.innerHTML : ""',
-          returnByValue: true,
-        }).catch(()=>({}));
-        cdp.close();
-
-        const html = br?.result?.value || '';
-
-        // Extrai produtos do HTML WooCommerce
-        const products = [];
-        // Padrão 1: li.product com todos os dados
-        const productBlocks = html.match(/class="[^"]*product[^"]*"[^>]*>[\s\S]{50,3000}?(?=<li class="[^"]*product|<\/ul>)/g) || [];
-        for (const block of productBlocks.slice(0, per_page)) {
-          const id = (block.match(/data-product_id="(\d+)"/) || block.match(/data-id="(\d+)"/) || [])[1];
-          const name = (block.match(/class="[^"]*woocommerce-loop-product__title[^"]*">([^<]+)</) ||
-                        block.match(/<h2[^>]*>([^<]{5,80})<\/h2>/) || [])[1];
-          const href = (block.match(/href="(https?:\/\/(?:www\.)?utimix\.com\/produto\/[^"]+)"/) || [])[1];
-          const slug = href ? href.replace(/.*\/produto\//,'').replace(/\//,'') : '';
-          const priceM = block.match(/woocommerce-Price-amount[^>]*>[\s\S]*?([0-9]+[,.][0-9]{2})/);
-          const price = priceM ? parseFloat(priceM[1].replace(',','.')) : 0;
-          const img = (block.match(/(?:src|data-src)="(https?:\/\/[^"]+\.(?:webp|jpg|jpeg|png)[^"]*)"/) || [])[1];
-          if (name && name.length > 3) {
-            products.push({
-              id: id ? parseInt(id) : (products.length + 1),
-              name: name.trim(), slug: slug || '',
-              price, regular_price: price, sale_price: 0,
-              image: img || '', images: img ? [img] : [],
-              categories: [], description: '',
-              stock_status: 'instock', in_stock: true, sku: ''
+        preq.on('connect', (pres, socket) => {
+          if (pres.statusCode !== 200) { clearTimeout(timeout); return reject(new Error('CONNECT ' + pres.statusCode)); }
+          const tlsSocket = tls.connect({ host: parsed.hostname, socket, rejectUnauthorized: false, servername: parsed.hostname }, () => {
+            const cookieHdr = extraCookies ? ('Cookie: ' + extraCookies + '\r\n') : '';
+            const reqStr = 'GET ' + parsed.pathname + parsed.search + ' HTTP/1.1\r\nHost: ' + parsed.hostname + '\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Language: pt-BR,pt;q=0.9\r\nAccept-Encoding: identity\r\nReferer: https://www.utimix.com/\r\n' + cookieHdr + 'Connection: close\r\n\r\n';
+            tlsSocket.write(reqStr);
+            const chunks = []; let headers = '';
+            tlsSocket.on('data', c => {
+              if (!headers) { const s = c.toString(); const hi = s.indexOf('\r\n\r\n'); if(hi>=0){headers=s.slice(0,hi); chunks.push(Buffer.from(s.slice(hi+4)));} else chunks.push(c); }
+              else chunks.push(c);
             });
-          }
-        }
+            tlsSocket.on('end', () => { clearTimeout(timeout); resolve({ headers, body: Buffer.concat(chunks).toString() }); });
+            tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
+          });
+          tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
+        });
+        preq.on('error', e => { clearTimeout(timeout); reject(e); });
+        preq.end();
+      });
+    }
 
-        // Padrão 2: JSON-LD se tiver
-        const jsonlds = (html.match(/application\/ld\+json[^>]*>([\s\S]*?)<\/script>/g) || []);
-        if (products.length === 0 && jsonlds.length > 0) {
-          for (const s of jsonlds) {
-            try {
-              const j = JSON.parse(s.replace(/.*?>([\s\S]*)<\/script>.*/,'$1'));
-              const items = j['@graph'] || (Array.isArray(j) ? j : [j]);
-              for (const item of items) {
-                if (item['@type'] === 'Product' && products.length < per_page) {
-                  products.push({
-                    id: products.length+1, name: item.name||'', slug: '',
-                    price: parseFloat(item.offers?.price||0), regular_price: parseFloat(item.offers?.price||0),
-                    sale_price: 0, image: item.image?.url||'', images: [],
-                    categories: [], description: (item.description||'').slice(0,200),
-                    stock_status: 'instock', in_stock: true, sku: item.sku||''
-                  });
-                }
-              }
-            } catch(e) {}
-          }
-        }
+    try {
+      // Primeiro request sem cookie — pega cf_clearance do BD IP
+      const r1 = await fetchViaResidential('https://www.utimix.com/', '');
+      const cfClear = (r1.headers.match(/cf_clearance=([^;\s]+)/) || [])[1] || '';
+      const allCookies = (cfClear ? 'cf_clearance=' + cfClear + '; ' : '') + wp_cookie;
 
-        if (products.length > 0) {
-          res.writeHead(200);
-          return res.end(JSON.stringify({ ok: true, products, total: products.length, page: page_num, html_len: html.length }));
-        }
+      // Segundo request com cf_clearance fresco
+      const r2 = await fetchViaResidential(targetUrl, allCookies);
+      const html = r2.body;
+      const status = (r2.headers.match(/HTTP\/[0-9.]+ (\d+)/) || [])[1] || '0';
 
-        res.writeHead(503);
-        return res.end(JSON.stringify({
-          ok: false,
-          error: 'Nenhum produto encontrado',
-          html_len: html.length,
-          html_preview: html.slice(0, 300),
-        }));
-      } catch(e) { cdp.close(); throw e; }
+      const products = [];
+      // Extrai produtos — padrões WooCommerce
+      const re_name = /<h2[^>]*class="[^"]*woocommerce-loop-product__title[^"]*"[^>]*>([^<]{3,80})</g;
+      const re_href = /href="(https?:\/\/(?:www\.)?utimix\.com\/produto\/[^"]+)"/g;
+      const re_price = /woocommerce-Price-amount[^>]*><bdi>(?:[^<]*<[^>]*>)*([0-9]+[,.][0-9]{2})/g;
+      const re_img = /class="[^"]*wp-post-image[^"]*"[^>]*src="([^"]+)"/g;
+
+      const names = [...html.matchAll(re_name)].map(m=>m[1].trim());
+      const hrefs = [...html.matchAll(re_href)].map(m=>m[1]);
+      const prices = [...html.matchAll(re_price)].map(m=>parseFloat(m[1].replace(',','.')));
+      const imgs = [...html.matchAll(re_img)].map(m=>m[1]);
+
+      for (let i = 0; i < Math.min(names.length, per_page); i++) {
+        const slug = (hrefs[i]||'').replace(/.*\/produto\//,'').replace(/\//,'');
+        products.push({
+          id: i+1, name: names[i], slug,
+          price: prices[i]||0, regular_price: prices[i]||0, sale_price: 0,
+          image: imgs[i]||'', images: imgs[i]?[imgs[i]]:[],
+          categories: [], description: '', stock_status: 'instock', in_stock: true, sku: ''
+        });
+      }
+
+      if (products.length > 0) {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ ok: true, products, total: products.length, page: page_num, method: 'residential_proxy', html_len: html.length }));
+      }
+
+      res.writeHead(503);
+      return res.end(JSON.stringify({ ok: false, error: 'Sem produtos', http_status: status, html_len: html.length, html_preview: html.slice(0,400) }));
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ ok: false, error: e.message }));
