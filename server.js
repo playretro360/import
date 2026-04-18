@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.15.0',
+      ok: true, service: 'vendry-sync', version: '14.17.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2415,6 +2415,320 @@ http.createServer(async (req, res) => {
       res.writeHead(500);
       return res.end(JSON.stringify({ ok: false, error: e.message }));
     }
+  }
+
+
+  // ── /utimix-products — scrapa catálogo Utimix via BD Scraping Browser ──
+  if (req.method === 'POST' && p === '/utimix-products') {
+    const d = await readBody();
+    const page_num = parseInt(d.page || '1');
+    const per_page = parseInt(d.per_page || '20');
+    const cookies_str = d.cookies || '';
+    try {
+      const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
+      await new Promise((resolve, reject) => {
+        ws.once('open', resolve); ws.once('error', reject);
+        setTimeout(() => reject(new Error('WS timeout')), 20000);
+      });
+      const cdp = new CDPBrowser(ws);
+      try {
+        const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
+        const existingPage = (targetInfos||[]).find(t => t.type === 'page');
+        let targetId;
+        if (existingPage) { targetId = existingPage.targetId; }
+        else { const nt = await cdp.send('Target.createTarget', { url: 'about:blank' }); targetId = nt.targetId; }
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+        const s = cdp.session(sessionId);
+        await s.send('Network.enable', {}).catch(()=>{});
+        await s.send('Page.enable', {}).catch(()=>{});
+        if (cookies_str) {
+          const cl = cookies_str.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
+            const eq = cp.indexOf('='); if(eq<0) return null;
+            return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.utimix.com', path: '/' };
+          }).filter(c=>c&&c.name&&c.value);
+          for(const ck of cl) { await s.send('Network.setCookie', ck).catch(()=>{}); }
+        }
+        const apiUrl = `https://www.utimix.com/wp-json/wc/v3/products?per_page=${per_page}&page=${page_num}&orderby=date&order=desc`;
+        await s.send('Page.navigate', { url: apiUrl });
+        await new Promise((resolve) => {
+          let done = false;
+          const timer = setTimeout(() => { done = true; resolve(); }, 15000);
+          cdp.ws.on('message', (raw) => {
+            if (done) return;
+            try {
+              const msg = JSON.parse(raw.toString());
+              if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameStoppedLoading') {
+                clearTimeout(timer); done = true; resolve();
+              }
+            } catch(e) {}
+          });
+        });
+        const bodyResult = await s.send('Runtime.evaluate', {
+          expression: 'document.body ? document.body.innerText : document.documentElement.innerText',
+          returnByValue: true,
+        }).catch(()=>({}));
+        cdp.close();
+        const rawText = bodyResult?.result?.value || '';
+        let products = [];
+        try { products = JSON.parse(rawText); } catch(e) {}
+        if (Array.isArray(products) && products.length > 0) {
+          const normalized = products.map(p => ({
+            id: p.id, name: p.name, slug: p.slug,
+            price: parseFloat(p.price || p.regular_price || 0),
+            regular_price: parseFloat(p.regular_price || 0),
+            sale_price: parseFloat(p.sale_price || 0),
+            image: (p.images && p.images[0]) ? p.images[0].src : '',
+            images: (p.images||[]).map(i=>i.src),
+            categories: (p.categories||[]).map(c=>c.name),
+            description: (p.short_description || p.description || '').replace(/<[^>]+>/g,'').slice(0,200),
+            stock_status: p.stock_status,
+            in_stock: p.stock_status === 'instock',
+          }));
+          res.writeHead(200);
+          return res.end(JSON.stringify({ ok: true, products: normalized, total: products.length, page: page_num }));
+        }
+        res.writeHead(404);
+        return res.end(JSON.stringify({ ok: false, error: 'Nenhum produto encontrado', raw_preview: rawText.slice(0,300) }));
+      } catch(e) { cdp.close(); throw e; }
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════
+  // /utimix-products — Sistema N1/N2/N3/N4 inquebrável
+  // N1: WC REST API via Residential Proxy + cookies
+  // N2: BD Scraping Browser navega direto na WC API URL
+  // N3: BD Scraping Browser scrapa HTML da página de produtos
+  // N4: WC API pública sem auth (produtos sem login)
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/utimix-products') {
+    const d = await readBody();
+    const page_num = parseInt(d.page || '1');
+    const per_page = parseInt(d.per_page || '20');
+    const cookies_str = d.cookies || '';
+    const category = d.category || '';
+    const search = d.search || '';
+
+    // Normaliza array de produtos WooCommerce
+    function normalizeProducts(arr) {
+      return arr.filter(p=>p&&p.name).map(p => ({
+        id: p.id, name: p.name, slug: p.slug || '',
+        price: parseFloat(p.price || p.regular_price || 0),
+        regular_price: parseFloat(p.regular_price || 0),
+        sale_price: parseFloat(p.sale_price || 0),
+        image: (p.images && p.images[0]) ? p.images[0].src : '',
+        images: (p.images||[]).map(i=>i.src).filter(Boolean),
+        categories: (p.categories||[]).map(c=>c.name),
+        description: (p.short_description || p.description || '').replace(/<[^>]+>/g,'').trim().slice(0,300),
+        stock_status: p.stock_status || 'instock',
+        in_stock: p.stock_status !== 'outofstock',
+        sku: p.sku || '',
+      }));
+    }
+
+    // Extrai produtos de resposta WC (JSON ou HTML com JSON embutido)
+    function parseWCResponse(raw) {
+      if (!raw) return null;
+      const text = raw.trim();
+      // Tenta JSON direto
+      if (text.startsWith('[')) {
+        try { const a = JSON.parse(text); if(Array.isArray(a)&&a.length) return a; } catch(e){}
+      }
+      if (text.startsWith('{')) {
+        try { const o = JSON.parse(text); if(o.code) return null; } catch(e){}
+      }
+      // Tenta extrair JSON de dentro do HTML (browser embeds it in <pre>)
+      const m = text.match(/<pre[^>]*>([\s\S]*?)<\/pre>/);
+      if (m) {
+        try { const a = JSON.parse(m[1]); if(Array.isArray(a)&&a.length) return a; } catch(e){}
+      }
+      return null;
+    }
+
+    // Constrói URL da API WC
+    function buildWCUrl(base) {
+      let url = base + `?per_page=${per_page}&page=${page_num}&orderby=date&order=desc`;
+      if (category) url += `&category=${encodeURIComponent(category)}`;
+      if (search) url += `&search=${encodeURIComponent(search)}`;
+      return url;
+    }
+    const WC_API = 'https://www.utimix.com/wp-json/wc/v3/products';
+    const WC_URL = buildWCUrl(WC_API);
+
+    // ── N1: Residential Proxy HTTP direto ─────────────────────────
+    async function n1_residential() {
+      const proxy = getProxy();
+      if (!proxy) throw new Error('Proxy nao configurado');
+      const https = require('https');
+      const url = require('url');
+      const parsed = new url.URL(WC_URL);
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('N1 timeout')), 12000);
+        const preq = https.request({
+          host: proxy.host, port: proxy.port,
+          method: 'CONNECT', path: `${parsed.hostname}:443`,
+          headers: { 'Proxy-Authorization': 'Basic ' + Buffer.from(`${proxy.auth.username}:${proxy.auth.password}`).toString('base64') }
+        });
+        preq.on('connect', (pres, socket) => {
+          if (pres.statusCode !== 200) { clearTimeout(timeout); return reject(new Error('CONNECT ' + pres.statusCode)); }
+          const tls = require('tls');
+          const tlsSocket = tls.connect({ host: parsed.hostname, socket, rejectUnauthorized: false }, () => {
+            const cookieHdr = cookies_str ? ('Cookie: ' + cookies_str + '\r\n') : '';
+            const reqLine = 'GET ' + parsed.pathname + parsed.search + ' HTTP/1.1\r\nHost: ' + parsed.hostname + '\r\nAccept: application/json\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/147\r\n' + cookieHdr + 'Connection: close\r\n\r\n';
+            tlsSocket.write(reqLine);
+            let data = '';
+            tlsSocket.on('data', c => data += c.toString());
+            tlsSocket.on('end', () => {
+              clearTimeout(timeout);
+              const bodyStart = data.indexOf('\r\n\r\n');
+              resolve(bodyStart >= 0 ? data.slice(bodyStart + 4) : data);
+            });
+            tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
+          });
+          tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
+        });
+        preq.on('error', e => { clearTimeout(timeout); reject(e); });
+        preq.end();
+      });
+    }
+
+    // ── N2: BD Scraping Browser CDP navega direto na WC API URL ──
+    async function n2_browser_api(targetUrl) {
+      const ws = new WebSocket(BD_WSS, { handshakeTimeout: 15000 });
+      await new Promise((resolve, reject) => {
+        ws.once('open', resolve); ws.once('error', reject);
+        setTimeout(() => reject(new Error('WS timeout')), 15000);
+      });
+      const cdp = new CDPBrowser(ws);
+      try {
+        const { targetInfos } = await cdp.send('Target.getTargets', {}).catch(() => ({ targetInfos: [] }));
+        const ep = (targetInfos||[]).find(t => t.type === 'page');
+        let tId;
+        if (ep) { tId = ep.targetId; }
+        else { const nt = await cdp.send('Target.createTarget', { url: 'about:blank' }); tId = nt.targetId; }
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: tId, flatten: true });
+        const s = cdp.session(sessionId);
+        await s.send('Network.enable', {}).catch(()=>{});
+        await s.send('Page.enable', {}).catch(()=>{});
+        // Injeta cookies
+        if (cookies_str) {
+          const cl = cookies_str.split(';').map(c=>c.trim()).filter(Boolean).map(cp => {
+            const eq = cp.indexOf('='); if(eq<0) return null;
+            return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.utimix.com', path: '/' };
+          }).filter(c=>c&&c.name&&c.value);
+          for(const ck of cl) { await s.send('Network.setCookie', ck).catch(()=>{}); }
+        }
+        await s.send('Page.navigate', { url: targetUrl });
+        await new Promise(resolve => {
+          let done = false;
+          const timer = setTimeout(() => { done = true; resolve(); }, 12000);
+          cdp.ws.on('message', raw => {
+            if (done) return;
+            try {
+              const msg = JSON.parse(raw.toString());
+              if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameStoppedLoading') {
+                clearTimeout(timer); done = true; resolve();
+              }
+            } catch(e) {}
+          });
+        });
+        const br = await s.send('Runtime.evaluate', {
+          expression: 'document.body ? document.body.innerText : document.documentElement.innerText',
+          returnByValue: true,
+        }).catch(()=>({}));
+        cdp.close();
+        return br?.result?.value || '';
+      } catch(e) { cdp.close(); throw e; }
+    }
+
+    // ── N3: BD Browser scrapa HTML da página de novidades ─────────
+    async function n3_browser_html() {
+      const htmlUrl = `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`;
+      const raw = await n2_browser_api(htmlUrl);
+      // Extrai produtos do HTML usando regex
+      const products = [];
+      // Padrão WooCommerce típico: data-product_id, woocommerce-loop-product__title, price
+      const blocks = raw.match(/data-product_id="(\d+)"[\s\S]{1,2000}?(?=data-product_id="|$)/g) || [];
+      for (const block of blocks.slice(0, per_page)) {
+        const id = (block.match(/data-product_id="(\d+)"/) || [])[1];
+        const name = (block.match(/woocommerce-loop-product__title[^>]*>([^<]+)</) || [])[1];
+        const price = (block.match(/woocommerce-Price-amount[^>]*>(?:[^<]*<[^>]*>)*?([0-9,\.]+)/) || [])[1];
+        const img = (block.match(/src="(https?:\/\/[^"]+(?:jpg|jpeg|png|webp)[^"]*)"/) || [])[1];
+        const slug = (block.match(/href="https?:\/\/www\.utimix\.com\/produto\/([^"\/]+)/) || [])[1];
+        if (id && name) {
+          products.push({
+            id: parseInt(id), name: name.trim(), slug: slug || '',
+            price: parseFloat((price||'0').replace(',','.')),
+            regular_price: 0, sale_price: 0,
+            image: img || '', images: img ? [img] : [],
+            categories: [], description: '', stock_status: 'instock', in_stock: true, sku: ''
+          });
+        }
+      }
+      return products;
+    }
+
+    // ── N4: WC API pública sem autenticação ───────────────────────
+    async function n4_public_api() {
+      const raw = await n2_browser_api(WC_URL);
+      return parseWCResponse(raw);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // EXECUTA N1 → N2 → N3 → N4 em cascata
+    // ═══════════════════════════════════════════════════════════════
+    const errors = [];
+    let products = null;
+    let method_used = '';
+
+    // N1: Residential Proxy
+    try {
+      const raw = await n1_residential();
+      const parsed = parseWCResponse(raw);
+      if (parsed && parsed.length > 0) { products = parsed; method_used = 'N1_residential'; }
+      else errors.push('N1: ' + (raw||'').slice(0,80));
+    } catch(e) { errors.push('N1: ' + e.message.slice(0,60)); }
+
+    // N2: Scraping Browser API URL
+    if (!products) {
+      try {
+        const raw = await n2_browser_api(WC_URL);
+        const parsed = parseWCResponse(raw);
+        if (parsed && parsed.length > 0) { products = parsed; method_used = 'N2_browser_api'; }
+        else errors.push('N2: ' + (raw||'').slice(0,80));
+      } catch(e) { errors.push('N2: ' + e.message.slice(0,60)); }
+    }
+
+    // N3: HTML scraping
+    if (!products) {
+      try {
+        const prods = await n3_browser_html();
+        if (prods && prods.length > 0) { products = prods; method_used = 'N3_html_scrape'; }
+        else errors.push('N3: 0 produtos no HTML');
+      } catch(e) { errors.push('N3: ' + e.message.slice(0,60)); }
+    }
+
+    // N4: WC API pública sem cookie
+    if (!products) {
+      try {
+        const raw = await n2_browser_api(buildWCUrl(WC_API));
+        const parsed = parseWCResponse(raw);
+        if (parsed && parsed.length > 0) { products = parsed; method_used = 'N4_public'; }
+        else errors.push('N4: ' + (raw||'').slice(0,80));
+      } catch(e) { errors.push('N4: ' + e.message.slice(0,60)); }
+    }
+
+    if (products && products.length > 0) {
+      const normalized = normalizeProducts(products);
+      res.writeHead(200);
+      return res.end(JSON.stringify({ ok: true, products: normalized, total: normalized.length, page: page_num, method: method_used }));
+    }
+
+    res.writeHead(503);
+    return res.end(JSON.stringify({ ok: false, error: 'Todos os metodos falharam', errors }));
   }
 
   res.writeHead(404);
