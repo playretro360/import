@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.24.0',
+      ok: true, service: 'vendry-sync', version: '14.26.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2330,7 +2330,7 @@ http.createServer(async (req, res) => {
       const proxyFn = useUnlocker ? (o) => unlockerReq(o.url) : (useResidential ? residentialReq : proxyReq);
       const proxyResp = await proxyFn({ url: d.url, method: d.method||'GET', headers: hdrs }, d.body||undefined);
       res.writeHead(proxyResp.status);
-      return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0,2000) }));
+      return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0, d.max_len || 2000) }));
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ error: e.message }));
@@ -2420,7 +2420,7 @@ http.createServer(async (req, res) => {
 
   // ── /utimix-products — scrapa catálogo Utimix via BD Scraping Browser ──
   // ══════════════════════════════════════════════════════════════════
-  // /utimix-products — Proxy residencial BD direto + headers Chrome real
+  // /utimix-products — Web Unlocker BD com cookies WP
   // ══════════════════════════════════════════════════════════════════
   if (req.method === 'POST' && p === '/utimix-products') {
     const d = await readBody();
@@ -2431,81 +2431,80 @@ http.createServer(async (req, res) => {
       ? `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`
       : 'https://www.utimix.com/novidades/?orderby=date';
 
-    // Usa proxy residencial BD via HTTPS CONNECT
-    async function fetchViaResidential(url, extraCookies) {
-      const proxy = getProxy();
-      if (!proxy) throw new Error('Proxy nao configurado');
-      const https = require('https'); const tls = require('tls'); const urlM = require('url');
-      const parsed = new urlM.URL(url);
+    // Usa BD Web Unlocker com custom headers (passa cookies WP)
+    async function fetchUtimix(url) {
+      const key = getUnlockerKey();
+      if (!key) throw new Error('BD_UNLOCKER_KEY nao configurado');
+      const body = JSON.stringify({
+        zone: 'web_unlocker1',
+        url: url,
+        format: 'raw',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+          'Referer': 'https://www.utimix.com/',
+          ...(wp_cookie ? { 'Cookie': wp_cookie } : {}),
+        },
+      });
       return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Residential timeout')), 20000);
-        const proxyAuth = Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64');
-        const preq = https.request({
-          host: proxy.host, port: proxy.port, method: 'CONNECT',
-          path: `${parsed.hostname}:443`,
-          headers: { 'Proxy-Authorization': `Basic ${proxyAuth}`, 'Host': `${parsed.hostname}:443` }
+        const opts = {
+          hostname: 'api.brightdata.com', port: 443, path: '/request', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'Content-Length': Buffer.byteLength(body) },
+        };
+        const r = https.request(opts);
+        r.setTimeout(30000);
+        r.on('error', reject);
+        r.on('timeout', () => { r.destroy(); reject(new Error('Unlocker timeout')); });
+        r.on('response', resp => {
+          const chunks = [];
+          resp.on('data', c => chunks.push(c));
+          resp.on('end', () => resolve({ status: resp.statusCode, raw: Buffer.concat(chunks).toString('utf8') }));
+          resp.on('error', reject);
         });
-        preq.on('connect', (pres, socket) => {
-          if (pres.statusCode !== 200) { clearTimeout(timeout); return reject(new Error('CONNECT ' + pres.statusCode)); }
-          const tlsSocket = tls.connect({ host: parsed.hostname, socket, rejectUnauthorized: false, servername: parsed.hostname }, () => {
-            const cookieHdr = extraCookies ? ('Cookie: ' + extraCookies + '\r\n') : '';
-            const reqStr = 'GET ' + parsed.pathname + parsed.search + ' HTTP/1.1\r\nHost: ' + parsed.hostname + '\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Language: pt-BR,pt;q=0.9\r\nAccept-Encoding: identity\r\nReferer: https://www.utimix.com/\r\n' + cookieHdr + 'Connection: close\r\n\r\n';
-            tlsSocket.write(reqStr);
-            const chunks = []; let headers = '';
-            tlsSocket.on('data', c => {
-              if (!headers) { const s = c.toString(); const hi = s.indexOf('\r\n\r\n'); if(hi>=0){headers=s.slice(0,hi); chunks.push(Buffer.from(s.slice(hi+4)));} else chunks.push(c); }
-              else chunks.push(c);
-            });
-            tlsSocket.on('end', () => { clearTimeout(timeout); resolve({ headers, body: Buffer.concat(chunks).toString() }); });
-            tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
-          });
-          tlsSocket.on('error', e => { clearTimeout(timeout); reject(e); });
-        });
-        preq.on('error', e => { clearTimeout(timeout); reject(e); });
-        preq.end();
+        r.write(body); r.end();
       });
     }
 
     try {
-      // Primeiro request sem cookie — pega cf_clearance do BD IP
-      const r1 = await fetchViaResidential('https://www.utimix.com/', '');
-      const cfClear = (r1.headers.match(/cf_clearance=([^;\s]+)/) || [])[1] || '';
-      const allCookies = (cfClear ? 'cf_clearance=' + cfClear + '; ' : '') + wp_cookie;
+      const result = await fetchUtimix(targetUrl);
+      const html = result.raw;
 
-      // Segundo request com cf_clearance fresco
-      const r2 = await fetchViaResidential(targetUrl, allCookies);
-      const html = r2.body;
-      const status = (r2.headers.match(/HTTP\/[0-9.]+ (\d+)/) || [])[1] || '0';
+      if (!html || html.length < 1000) {
+        res.writeHead(503);
+        return res.end(JSON.stringify({ ok: false, error: 'HTML muito pequeno', http_status: result.status, html_len: html.length, html_preview: html.slice(0,200) }));
+      }
 
+      // Extrai produtos WooCommerce
       const products = [];
-      // Extrai produtos — padrões WooCommerce
-      const re_name = /<h2[^>]*class="[^"]*woocommerce-loop-product__title[^"]*"[^>]*>([^<]{3,80})</g;
+      const re_name = /class="[^"]*woocommerce-loop-product__title[^"]*">([^<]{3,80})</g;
       const re_href = /href="(https?:\/\/(?:www\.)?utimix\.com\/produto\/[^"]+)"/g;
-      const re_price = /woocommerce-Price-amount[^>]*><bdi>(?:[^<]*<[^>]*>)*([0-9]+[,.][0-9]{2})/g;
-      const re_img = /class="[^"]*wp-post-image[^"]*"[^>]*src="([^"]+)"/g;
+      const re_price = /woocommerce-Price-amount[^>]*>(?:<[^>]+>)*R\$(?:<[^>]+>)*\s*([\d.,]+)/g;
+      const re_img = /class="[^"]*wp-post-image[^"]*"[^>]*(?:src|data-src)="([^"]+)"/g;
 
-      const names = [...html.matchAll(re_name)].map(m=>m[1].trim());
-      const hrefs = [...html.matchAll(re_href)].map(m=>m[1]);
-      const prices = [...html.matchAll(re_price)].map(m=>parseFloat(m[1].replace(',','.')));
-      const imgs = [...html.matchAll(re_img)].map(m=>m[1]);
+      const names = [...html.matchAll(re_name)].map(m => m[1].trim());
+      const hrefs = [...new Set([...html.matchAll(re_href)].map(m => m[1]))];
+      const prices_raw = [...html.matchAll(re_price)].map(m => parseFloat(m[1].replace(/\./g,'').replace(',','.')));
+      const imgs = [...html.matchAll(re_img)].map(m => m[1]);
 
       for (let i = 0; i < Math.min(names.length, per_page); i++) {
-        const slug = (hrefs[i]||'').replace(/.*\/produto\//,'').replace(/\//,'');
+        const href = hrefs[i] || '';
+        const slug = href.replace(/.*\/produto\//,'').replace(/\/$/,'');
         products.push({
           id: i+1, name: names[i], slug,
-          price: prices[i]||0, regular_price: prices[i]||0, sale_price: 0,
-          image: imgs[i]||'', images: imgs[i]?[imgs[i]]:[],
+          price: prices_raw[i] || 0, regular_price: prices_raw[i] || 0, sale_price: 0,
+          image: imgs[i] || '', images: imgs[i] ? [imgs[i]] : [],
           categories: [], description: '', stock_status: 'instock', in_stock: true, sku: ''
         });
       }
 
       if (products.length > 0) {
         res.writeHead(200);
-        return res.end(JSON.stringify({ ok: true, products, total: products.length, page: page_num, method: 'residential_proxy', html_len: html.length }));
+        return res.end(JSON.stringify({ ok: true, products, total: products.length, page: page_num, method: 'web_unlocker', html_len: html.length }));
       }
 
       res.writeHead(503);
-      return res.end(JSON.stringify({ ok: false, error: 'Sem produtos', http_status: status, html_len: html.length, html_preview: html.slice(0,400) }));
+      return res.end(JSON.stringify({ ok: false, error: 'Sem produtos no HTML', html_len: html.length, html_preview: html.slice(500, 1500) }));
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ ok: false, error: e.message }));
