@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.14.0',
+      ok: true, service: 'vendry-sync', version: '14.15.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2370,40 +2370,46 @@ http.createServer(async (req, res) => {
         }
 
         // Navega diretamente pra URL da API — browser envia cookies + IP residencial
-        await s.send('Page.navigate', { url: apiUrl });
-
-        // Aguarda loadEventFired
-        await new Promise((resolve) => {
-          let done = false;
-          const timer = setTimeout(() => { done = true; resolve(); }, 12000);
-          cdp.ws.on('message', (raw) => {
-            if (done) return;
-            try {
-              const msg = JSON.parse(raw.toString());
-              if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameStoppedLoading') {
-                clearTimeout(timer); done = true; resolve();
-              }
-            } catch(e) {}
+        // Tenta múltiplas APIs em sequência
+        const apiUrls = [
+          'https://shopee.com.br/api/v4/item/get?itemid=' + d.itemid + '&shopid=' + d.shopid,
+          'https://shopee.com.br/api/v2/item/get?itemid=' + d.itemid + '&shopid=' + d.shopid,
+          'https://shopee.com.br/' + d.shopid + '/' + d.itemid,
+        ];
+        
+        let item = null;
+        for (const apiUrl of apiUrls) {
+          await s.send('Page.navigate', { url: apiUrl });
+          await new Promise((resolve) => {
+            let done = false;
+            const timer = setTimeout(() => { done = true; resolve(); }, 10000);
+            cdp.ws.on('message', (raw) => {
+              if (done) return;
+              try {
+                const msg = JSON.parse(raw.toString());
+                if (msg.method === 'Page.loadEventFired' || msg.method === 'Page.frameStoppedLoading') {
+                  clearTimeout(timer); done = true; resolve();
+                }
+              } catch(e) {}
+            });
           });
-        });
-
-        // Lê o body da página (JSON da API)
-        const bodyResult = await s.send('Runtime.evaluate', {
-          expression: 'document.body ? document.body.innerText : document.documentElement.innerText',
-          returnByValue: true,
-        }).catch(()=>({}));
+          const bodyResult = await s.send('Runtime.evaluate', {
+            expression: 'document.body ? document.body.innerText : document.documentElement.innerText',
+            returnByValue: true,
+          }).catch(()=>({}));
+          const rawText = bodyResult?.result?.value || '';
+          let data = {};
+          try { data = JSON.parse(rawText); } catch(e) {}
+          const candidate = (data.data||{}).item || (data.item) || (data.error === 0 ? data.data : null);
+          if (candidate && candidate.name) { item = candidate; break; }
+        }
         cdp.close();
-
-        const rawText = bodyResult?.result?.value || '';
-        let data = {};
-        try { data = JSON.parse(rawText); } catch(e) {}
-        const item = (data.data||{}).item || {};
-        if (item.name) {
+        if (item && item.name) {
           res.writeHead(200);
           return res.end(JSON.stringify({ ok: true, item }));
         }
         res.writeHead(404);
-        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado', debug: { bodyPreview: rawText.slice(0,300) } }));
+        return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado' }));
       } catch(e) { cdp.close(); throw e; }
     } catch(e) {
       res.writeHead(500);
