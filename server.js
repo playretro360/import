@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.18.0',
+      ok: true, service: 'vendry-sync', version: '14.19.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2650,7 +2650,10 @@ http.createServer(async (req, res) => {
         ? `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`
         : 'https://www.utimix.com/novidades/?orderby=date';
       const raw = await n2_browser_api(htmlUrl);
-      if (!raw || raw.length < 500) throw new Error('HTML muito pequeno: ' + raw.slice(0,80));
+      if (!raw || raw.length < 500) {
+        // Retorna array vazio com debug em vez de throw
+        const empty = []; empty._html_len = raw ? raw.length : 0; return empty;
+      }
       const products = [];
 
       // Estratégia 1: blocos por data-product_id
@@ -2697,7 +2700,7 @@ http.createServer(async (req, res) => {
         } catch(e) {}
       }
 
-      return products;
+      products._html_len = raw.length; return products;
     }
 
     // ── N4: WC API pública sem autenticação ───────────────────────
@@ -2707,21 +2710,20 @@ http.createServer(async (req, res) => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // EXECUTA N1 → N2 → N3 → N4 em cascata
+    // EXECUTA N3 → N2 → N1 em cascata (N3 primeiro = HTML sem auth)
     // ═══════════════════════════════════════════════════════════════
     const errors = [];
     let products = null;
     let method_used = '';
 
-    // N1: Residential Proxy
+    // N3 PRIMEIRO: HTML scraping — não precisa de Consumer Key
     try {
-      const raw = await n1_residential();
-      const parsed = parseWCResponse(raw);
-      if (parsed && parsed.length > 0) { products = parsed; method_used = 'N1_residential'; }
-      else errors.push('N1: ' + (raw||'').slice(0,80));
-    } catch(e) { errors.push('N1: ' + e.message.slice(0,60)); }
+      const prods = await n3_browser_html();
+      if (prods && prods.length > 0) { products = prods; method_used = 'N3_html_scrape'; }
+      else errors.push('N3: 0 produtos | html_len=' + (prods && prods._html_len || '?'));
+    } catch(e) { errors.push('N3: ' + e.message.slice(0,80)); }
 
-    // N2: Scraping Browser API URL
+    // N2: Scraping Browser → WC API JSON
     if (!products) {
       try {
         const raw = await n2_browser_api(WC_URL);
@@ -2730,12 +2732,15 @@ http.createServer(async (req, res) => {
         else errors.push('N2: ' + (raw||'').slice(0,80));
       } catch(e) { errors.push('N2: ' + e.message.slice(0,60)); }
     }
+
+    // N1: Residential Proxy HTTP
     if (!products) {
       try {
-        const prods = await n3_browser_html();
-        if (prods && prods.length > 0) { products = prods; method_used = 'N3_html_scrape'; }
-        else errors.push('N3: 0 produtos no HTML');
-      } catch(e) { errors.push('N3: ' + e.message.slice(0,60)); }
+        const raw = await n1_residential();
+        const parsed = parseWCResponse(raw);
+        if (parsed && parsed.length > 0) { products = parsed; method_used = 'N1_residential'; }
+        else errors.push('N1: ' + (raw||'').slice(0,80));
+      } catch(e) { errors.push('N1: ' + e.message.slice(0,60)); }
     }
 
     // N4: WC API pública sem cookie
