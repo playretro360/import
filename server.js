@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.17.0',
+      ok: true, service: 'vendry-sync', version: '14.18.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2644,30 +2644,59 @@ http.createServer(async (req, res) => {
       } catch(e) { cdp.close(); throw e; }
     }
 
-    // ── N3: BD Browser scrapa HTML da página de novidades ─────────
+    // ── N3: BD Browser scrapa HTML da página de produtos ──────────
     async function n3_browser_html() {
-      const htmlUrl = `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`;
+      const htmlUrl = page_num > 1
+        ? `https://www.utimix.com/novidades/page/${page_num}/?orderby=date`
+        : 'https://www.utimix.com/novidades/?orderby=date';
       const raw = await n2_browser_api(htmlUrl);
-      // Extrai produtos do HTML usando regex
+      if (!raw || raw.length < 500) throw new Error('HTML muito pequeno: ' + raw.slice(0,80));
       const products = [];
-      // Padrão WooCommerce típico: data-product_id, woocommerce-loop-product__title, price
-      const blocks = raw.match(/data-product_id="(\d+)"[\s\S]{1,2000}?(?=data-product_id="|$)/g) || [];
+
+      // Estratégia 1: blocos por data-product_id
+      const blocks = raw.match(/data-product_id="\d+"[\s\S]{100,3000}?(?=data-product_id=|<\/ul>|<\/div>\s*<\/section>)/g) || [];
       for (const block of blocks.slice(0, per_page)) {
         const id = (block.match(/data-product_id="(\d+)"/) || [])[1];
-        const name = (block.match(/woocommerce-loop-product__title[^>]*>([^<]+)</) || [])[1];
-        const price = (block.match(/woocommerce-Price-amount[^>]*>(?:[^<]*<[^>]*>)*?([0-9,\.]+)/) || [])[1];
-        const img = (block.match(/src="(https?:\/\/[^"]+(?:jpg|jpeg|png|webp)[^"]*)"/) || [])[1];
-        const slug = (block.match(/href="https?:\/\/www\.utimix\.com\/produto\/([^"\/]+)/) || [])[1];
+        const name = (block.match(/(?:woocommerce-loop-product__title|product-title)[^>]*>([^<]{3,})</) || [])[1];
+        const price_m = block.match(/([0-9]+[,\.][0-9]{2})/) ;
+        const price = price_m ? parseFloat(price_m[1].replace(',','.')) : 0;
+        const img = (block.match(/(?:src|data-src)="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/) || [])[1];
+        const href = (block.match(/href="(https?:\/\/(?:www\.)?utimix\.com\/[^"]+)"/) || [])[1];
+        const slug = href ? href.split('/produto/')[1]?.replace(/\/$/, '') || '' : '';
         if (id && name) {
           products.push({
-            id: parseInt(id), name: name.trim(), slug: slug || '',
-            price: parseFloat((price||'0').replace(',','.')),
-            regular_price: 0, sale_price: 0,
+            id: parseInt(id), name: name.trim(), slug,
+            price, regular_price: price, sale_price: 0,
             image: img || '', images: img ? [img] : [],
             categories: [], description: '', stock_status: 'instock', in_stock: true, sku: ''
           });
         }
       }
+
+      // Estratégia 2: JSON-LD schema.org Product
+      const jsonlds = raw.match(/<script[^>]+type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g) || [];
+      for (const s of jsonlds) {
+        try {
+          const content = s.replace(/<script[^>]*>|<\/script>/g,'');
+          const j = JSON.parse(content);
+          const items = Array.isArray(j) ? j : (j['@graph'] || [j]);
+          for (const item of items) {
+            if (item['@type'] === 'Product' && item.name && products.length < per_page) {
+              const price = parseFloat(item.offers?.price || item.offers?.lowPrice || 0);
+              const img = item.image?.url || (Array.isArray(item.image) ? item.image[0]?.url : '') || '';
+              products.push({
+                id: products.length + 9000, name: item.name, slug: item.url?.split('/produto/')[1]?.replace(/\/$/, '') || '',
+                price, regular_price: price, sale_price: 0,
+                image: img, images: img ? [img] : [],
+                categories: item.category ? [item.category] : [],
+                description: (item.description||'').slice(0,200),
+                stock_status: 'instock', in_stock: true, sku: item.sku || ''
+              });
+            }
+          }
+        } catch(e) {}
+      }
+
       return products;
     }
 
@@ -2701,8 +2730,6 @@ http.createServer(async (req, res) => {
         else errors.push('N2: ' + (raw||'').slice(0,80));
       } catch(e) { errors.push('N2: ' + e.message.slice(0,60)); }
     }
-
-    // N3: HTML scraping
     if (!products) {
       try {
         const prods = await n3_browser_html();
