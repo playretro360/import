@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.23.0',
+      ok: true, service: 'vendry-sync', version: '14.24.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2439,7 +2439,7 @@ http.createServer(async (req, res) => {
       const parsed = new urlM.URL(url);
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Residential timeout')), 20000);
-        const proxyAuth = Buffer.from(`${proxy.auth.username}:${proxy.auth.password}`).toString('base64');
+        const proxyAuth = Buffer.from(`${proxy.user}:${proxy.pass}`).toString('base64');
         const preq = https.request({
           host: proxy.host, port: proxy.port, method: 'CONNECT',
           path: `${parsed.hostname}:443`,
