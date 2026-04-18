@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.19.0',
+      ok: true, service: 'vendry-sync', version: '14.20.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2700,7 +2700,14 @@ http.createServer(async (req, res) => {
         } catch(e) {}
       }
 
-      products._html_len = raw.length; return products;
+      // Debug: se 0 produtos, retorna info do HTML
+      if (products.length === 0) {
+        const debug_ids = (raw.match(/data-product_id/g)||[]).length;
+        const debug_ld = (raw.match(/application\/ld\+json/g)||[]).length;
+        const err = []; err._html_len = raw.length; err._debug = `ids:${debug_ids} ld:${debug_ld} preview:${raw.slice(500,800)}`;
+        return err;
+      }
+      return products;
     }
 
     // ── N4: WC API pública sem autenticação ───────────────────────
@@ -2720,7 +2727,7 @@ http.createServer(async (req, res) => {
     try {
       const prods = await n3_browser_html();
       if (prods && prods.length > 0) { products = prods; method_used = 'N3_html_scrape'; }
-      else errors.push('N3: 0 produtos | html_len=' + (prods && prods._html_len || '?'));
+      else errors.push('N3: 0 produtos html=' + (prods && prods._html_len || '?') + ' debug=' + (prods && prods._debug || '?').slice(0,120));
     } catch(e) { errors.push('N3: ' + e.message.slice(0,80)); }
 
     // N2: Scraping Browser → WC API JSON
