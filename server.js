@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.27.0',
+      ok: true, service: 'vendry-sync', version: '14.28.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2419,6 +2419,94 @@ http.createServer(async (req, res) => {
 
 
   // ── /utimix-products — scrapa catálogo Utimix via BD Scraping Browser ──
+
+  // ══════════════════════════════════════════════════════════════════
+  // /utimix-scrape-details — Scrapa imagens, desc e tiers de cada produto
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/utimix-scrape-details') {
+    const d = await readBody();
+    const slug = d.slug || '';
+    const wp_cookie = d.wp_cookie || '';
+    if (!slug) { res.writeHead(400); return res.end(JSON.stringify({ error: 'slug obrigatorio' })); }
+
+    try {
+      // Scrapa via BD Unlocker
+      const result = await unlockerReq(`https://www.utimix.com/produto/${slug}/`);
+      const html = result.raw || '';
+      if (html.length < 5000) {
+        res.writeHead(503);
+        return res.end(JSON.stringify({ ok: false, error: 'HTML pequeno', html_len: html.length }));
+      }
+
+      // Tiers de preço
+      const tiers = [];
+      const rows = html.match(/<tr[\s\S]*?<\/tr>/g) || [];
+      for (const row of rows) {
+        const tds = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(m => m[1].replace(/<[^>]+>/g,'').trim());
+        if (tds.length >= 2) {
+          const qty = tds[0];
+          const priceRaw = tds[1].replace(/&#082;&#036;/g,'').replace(/&nbsp;/g,'').trim();
+          const priceM = priceRaw.match(/[\d,]+/);
+          if (/\d/.test(qty) && priceM && (qty.includes('-') || qty.includes('+'))) {
+            tiers.push({ qty, price: parseFloat(priceM[0].replace(',','.')) });
+          }
+        }
+      }
+
+      // Imagens via slug words
+      const slugWords = slug.split('-').filter(w => w.length > 3).slice(0,4);
+      const imgs = [];
+      const imgRe = /https:\/\/www\.utimix\.com\/wp-content\/uploads\/[^"\s]+400x400[^"\s]*\.(?:jpg|jpeg|png|webp)/g;
+      let m;
+      while ((m = imgRe.exec(html)) !== null) {
+        const u = m[0];
+        if (slugWords.some(w => u.toLowerCase().includes(w)) && !imgs.includes(u)) imgs.push(u);
+      }
+      if (!imgs.length) {
+        const ogM = html.match(/og:image[^>]+content="([^"]+)"/);
+        if (ogM) imgs.push(ogM[1]);
+      }
+
+      // Descrição
+      let desc = '';
+      const descIdx = html.indexOf('woocommerce-Tabs-panel--description');
+      if (descIdx >= 0) {
+        let chunk = html.slice(descIdx, descIdx + 4000)
+          .replace(/<style[\s\S]*?<\/style>/gi,'')
+          .replace(/<script[\s\S]*?<\/script>/gi,'');
+        const lines = chunk.replace(/<[^>]+>/g,'\n').split('\n')
+          .map(l => l.trim())
+          .filter(l => l.length > 20 && !l.toLowerCase().startsWith('tab') && !l.toLowerCase().includes('woocommerce') && !l.includes('{') && !l.includes(':not(') && !l.startsWith('ATEN') && !l.includes('ILUSTRA'));
+        desc = lines.slice(0,6).join(' ').slice(0,500).trim();
+      }
+
+      // Variações
+      const variations = [];
+      const selRe = /<select[^>]*name="attribute_[^"]*"[^>]*>([\s\S]*?)<\/select>/g;
+      let sm;
+      while ((sm = selRe.exec(html)) !== null) {
+        const optRe = /<option[^>]*value="([^"]+)"[^>]*>([^<]+)<\/option>/g;
+        let om;
+        while ((om = optRe.exec(sm[1])) !== null) {
+          if (om[1].trim() && !om[2].includes('Escolha')) variations.push(om[2].trim());
+        }
+      }
+
+      res.writeHead(200);
+      return res.end(JSON.stringify({
+        ok: true, slug,
+        tiers,
+        images: imgs.slice(0,8),
+        description: desc,
+        variations: [...new Set(variations)].slice(0,10),
+        html_len: html.length
+      }));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message, slug }));
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════
   // /utimix-products — Web Unlocker BD com cookies WP
   // ══════════════════════════════════════════════════════════════════
