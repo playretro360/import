@@ -2187,7 +2187,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.26.0',
+      ok: true, service: 'vendry-sync', version: '14.27.0',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
@@ -2475,26 +2475,35 @@ http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ ok: false, error: 'HTML muito pequeno', http_status: result.status, html_len: html.length, html_preview: html.slice(0,200) }));
       }
 
-      // Extrai produtos WooCommerce
+      // Extrai produtos via data-gtm4wp_productdata (tem todos os campos)
       const products = [];
-      const re_name = /class="[^"]*woocommerce-loop-product__title[^"]*">([^<]{3,80})</g;
-      const re_href = /href="(https?:\/\/(?:www\.)?utimix\.com\/produto\/[^"]+)"/g;
-      const re_price = /woocommerce-Price-amount[^>]*>(?:<[^>]+>)*R\$(?:<[^>]+>)*\s*([\d.,]+)/g;
-      const re_img = /class="[^"]*wp-post-image[^"]*"[^>]*(?:src|data-src)="([^"]+)"/g;
+      const gtmBlocks = [...html.matchAll(/data-gtm4wp_product_id="(\d+)"[^>]+data-gtm4wp_product_name="([^"]+)"[^>]+data-gtm4wp_product_price="([^"]+)"[^>]+data-gtm4wp_product_cat="([^"]*)"[^>]+data-gtm4wp_product_url="([^"]+)"[^>]*(?:data-gtm4wp_product_stocklevel="([^"]*)")?/g)];
 
-      const names = [...html.matchAll(re_name)].map(m => m[1].trim());
-      const hrefs = [...new Set([...html.matchAll(re_href)].map(m => m[1]))];
-      const prices_raw = [...html.matchAll(re_price)].map(m => parseFloat(m[1].replace(/\./g,'').replace(',','.')));
-      const imgs = [...html.matchAll(re_img)].map(m => m[1]);
+      for (const m of gtmBlocks.slice(0, per_page)) {
+        const id = parseInt(m[1]);
+        const name = m[2].replace(/&amp;/g,'&').replace(/&#[0-9]+;/g,'');
+        const price = parseFloat(m[3]) || 0;
+        const category = m[4].replace(/&amp;/g,'&').split('/')[0].trim();
+        const url = m[5];
+        const slug = url.replace(/.*\/produto\//,'').replace(/\/$/,'');
+        const stock = parseInt(m[6]||'0');
 
-      for (let i = 0; i < Math.min(names.length, per_page); i++) {
-        const href = hrefs[i] || '';
-        const slug = href.replace(/.*\/produto\//,'').replace(/\/$/,'');
+        // Busca imagem associada ao produto
+        const prodIdx = html.indexOf(`data-gtm4wp_product_id="${id}"`);
+        const prodBlock = html.slice(Math.max(0, prodIdx-3000), prodIdx);
+        const imgM = prodBlock.match(/src="(https:\/\/www\.utimix\.com\/wp-content\/uploads\/[^"]+(?:400x400|300x300)[^"]*\.(?:png|jpg|jpeg|webp))"/);
+        const img = imgM ? imgM[1] : '';
+
         products.push({
-          id: i+1, name: names[i], slug,
-          price: prices_raw[i] || 0, regular_price: prices_raw[i] || 0, sale_price: 0,
-          image: imgs[i] || '', images: imgs[i] ? [imgs[i]] : [],
-          categories: [], description: '', stock_status: 'instock', in_stock: true, sku: ''
+          id, name, slug, price,
+          regular_price: price, sale_price: 0,
+          image: img, images: img ? [img] : [],
+          categories: category ? [category] : [],
+          description: '',
+          stock_status: stock > 0 ? 'instock' : 'outofstock',
+          in_stock: stock > 0,
+          stock_quantity: stock,
+          sku: ''
         });
       }
 
