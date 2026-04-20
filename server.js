@@ -2609,6 +2609,93 @@ http.createServer(async (req, res) => {
   }
 
 
+  // ── /img — proxy de imagem binário (GET ?url=) ──
+  if (req.method === 'GET' && pathname === '/img') {
+    const imgUrl = url.searchParams.get('url') || '';
+    if (!imgUrl) { res.writeHead(400); return res.end('url obrigatoria'); }
+    
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    
+    try {
+      const result = await proxyReqBinary({
+        url: imgUrl,
+        method: 'GET',
+        headers: {
+          'User-Agent': rnd(UA_DESKTOP),
+          'Referer': 'https://www.utimix.com/',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+        }
+      });
+
+      if (result.status !== 200) {
+        res.writeHead(result.status);
+        return res.end();
+      }
+
+      const ct = result.contentType || 'image/jpeg';
+      res.writeHead(200, {
+        'Content-Type': ct,
+        'Cache-Control': 'public, max-age=86400',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      });
+      res.end(result.bytes);
+    } catch(e) {
+      console.error('/img error:', e.message);
+      res.writeHead(502);
+      res.end();
+    }
+    return;
+  }
+
+
+
+  if (pathname === '/proxy-image') {
+    let imgUrl = '';
+    if (req.method === 'GET') {
+      imgUrl = url.searchParams.get('url') || '';
+    } else if (req.method === 'POST') {
+      let body = '';
+      await new Promise(resolve => { req.on('data', d => body += d); req.on('end', resolve); });
+      try { imgUrl = JSON.parse(body).url || ''; } catch(e) {}
+    }
+    if (!imgUrl) { res.writeHead(400); return res.end(JSON.stringify({ error: 'url obrigatoria' })); }
+    
+    // CORS headers para permitir img src cross-origin
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    
+    const mod = imgUrl.startsWith('https') ? require('https') : require('http');
+    mod.get(imgUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.utimix.com/',
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        'Sec-Fetch-Dest': 'image',
+        'Sec-Fetch-Mode': 'no-cors',
+        'Sec-Fetch-Site': 'same-origin',
+      }
+    }, (imgRes) => {
+      if (imgRes.statusCode !== 200) {
+        res.writeHead(imgRes.statusCode);
+        return res.end();
+      }
+      res.writeHead(200, {
+        'Content-Type': imgRes.headers['content-type'] || 'image/jpeg',
+        'Cache-Control': 'public, max-age=86400',
+        'Access-Control-Allow-Origin': '*',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      });
+      imgRes.pipe(res);
+    }).on('error', (e) => { res.writeHead(502); res.end(); });
+    return;
+  }
+
+
   res.writeHead(404);
   res.end(JSON.stringify({ error: 'Not found' }));
 
