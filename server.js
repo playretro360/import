@@ -2251,7 +2251,7 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.29.0-refresh-fix',
+      ok: true, service: 'vendry-sync', version: '14.30.0-pdp-full',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
