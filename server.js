@@ -1,4 +1,6 @@
-// Vendry Sync Server v14.0 — ULTRA ELASTIC 2500+ ENDPOINTS
+// Vendry Sync Server v14.1 — REFRESH HIERARCHY FIX (L1 → L2 → L3)
+// FIX: refresh_token ANTES do browser, validação real (exige SPC_ST + shop_name),
+//      merge seguro (não sobrescreve tokens com vazios), 5 endpoints de refresh
 // GERADOR AUTOMÁTICO: paths × versões × variações = cobertura total Shopee
 // INDETECTÁVEL: brd.superproxy.io + IA adaptativa + 8 UA pool
 // Categorias: Order | Product | Logistics | Shop | Finance | Promotion |
@@ -1845,22 +1847,41 @@ async function refreshWithBrowser(cookies, feSession) {
 
     const mergedCookies = mergeCookiesObj(cookies, shopeeNewCookies);
 
-    // ── Valida sessão ─────────────────────────────────────────
-    let sessionOk = true;
+    // ── Valida sessão (REAL: exige SPC_ST nos cookies + nome da loja da API) ──
+    let sessionOk = false;
+    let validationDetail = 'nao_validado';
+    const hasSpcSt = /SPC_ST=[^;]{20,}/.test(mergedCookies);
+    const hasSpcU = /SPC_U=\d/.test(mergedCookies);
     try {
       const spcCds = getCookieVal(mergedCookies, 'SPC_CDS');
       const result = await sessionCdp.send('Runtime.evaluate', {
-        expression: `fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify({code:d.code,errcode:d.errcode,name:d.data&&d.data.shop_name})).catch(e=>JSON.stringify({error:e.message}))`,
+        expression: `fetch('https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${encodeURIComponent(spcCds)}&SPC_CDS_VER=2',{credentials:'include'}).then(r=>r.json()).then(d=>JSON.stringify({code:d.code,errcode:d.errcode,name:d.data&&d.data.shop_name,user_id:d.data&&d.data.user_id})).catch(e=>JSON.stringify({error:e.message}))`,
         awaitPromise: true, timeout: 10000,
       });
       const apiResult = JSON.parse(result.result?.value || '{}');
+      // SÓ É VÁLIDO SE: (a) cookies têm SPC_ST autenticado, (b) API retornou shop_name
       if (apiResult.errcode === 2 || apiResult.code === 2) {
         sessionOk = false;
-      } else if (apiResult.name) {
-        console.log(`[browser] sessão válida — loja: ${apiResult.name}`);
+        validationDetail = 'errcode_2';
+      } else if (apiResult.name && hasSpcSt && hasSpcU) {
+        sessionOk = true;
+        validationDetail = 'loja_' + String(apiResult.name).slice(0,30);
+        console.log(`[browser] ✅ sessão VÁLIDA — loja: ${apiResult.name}`);
+      } else if (!apiResult.name && !hasSpcSt) {
+        sessionOk = false;
+        validationDetail = 'sem_nome_e_sem_SPC_ST';
+      } else if (!hasSpcSt) {
+        sessionOk = false;
+        validationDetail = 'sem_SPC_ST';
+      } else {
+        sessionOk = false;
+        validationDetail = 'api_sem_nome';
       }
     } catch(e) {
-      console.log('[browser] validação skip:', e.message.slice(0,40));
+      // Se validação deu erro: só aceita se PELO MENOS tem SPC_ST autenticado
+      sessionOk = hasSpcSt && hasSpcU;
+      validationDetail = 'val_erro:' + (e.message || '').slice(0,30);
+      console.log('[browser] validação erro:', e.message.slice(0,60), '| sessionOk=' + sessionOk);
     }
 
     sessionCdp.close();
@@ -1871,7 +1892,9 @@ async function refreshWithBrowser(cookies, feSession) {
       cookies: mergedCookies,
       cookies_count: shopeeNewCookies.length,
       fingerprint: `${fp.width}x${fp.height} ${fp.tz}`,
-      error: sessionOk ? undefined : 'Sessão expirada — reconecte via extensão',
+      validation: validationDetail,
+      has_spc_st: hasSpcSt,
+      error: sessionOk ? undefined : 'Sessão expirada — ' + validationDetail,
     };
 
   } catch(e) {
@@ -1904,34 +1927,24 @@ function mergeCookies(existing, setCookieHeaders) {
 async function refreshCookies(cookies, feSession) {
   const errors = [];
 
-  // ── NÍVEL 2+3: Browser real (melhor) ─────────────────────────
-  if (BD_WSS) {
-    try {
-      console.log('[refresh] tentando Nível 2+3 (browser real BD)...');
-      const r = await refreshWithBrowser(cookies, feSession);
-      if (r.ok) {
-        console.log(`[refresh] ✅ L2+L3 OK | ${r.cookies_count} cookies | fp=${r.fingerprint}`);
-        return r;
-      }
-      if (r.expired) return r; // sessão definitivamente morta
-      errors.push('L2/L3: ' + (r.error || 'falhou'));
-    } catch(e) {
-      errors.push('L2/L3: ' + e.message);
-      console.log('[refresh] L2+L3 erro:', e.message);
-    }
-  }
-
-  // ── NÍVEL 1: Refresh token via proxy ────────────────────────
   const spcRTId = getCookie(cookies, 'SPC_R_T_ID');
   const spcRTIv = getCookie(cookies, 'SPC_R_T_IV');
   const csrftoken = getCookie(cookies, 'csrftoken');
+  const spcCds = getCookie(cookies, 'SPC_CDS');
 
+  // ── NÍVEL 1: Refresh Token API (MAIS RÁPIDO E OFICIAL) ───────
+  // SPC_R_T_ID + SPC_R_T_IV duram semanas e renovam SPC_ST automaticamente
   if (spcRTId && spcRTIv) {
-    console.log('[refresh] tentando Nível 1 (refresh token via proxy)...');
-    for (const url of [
+    console.log('[refresh] Tentando Nível 1 (refresh token via proxy)...');
+    // Lista ampliada de endpoints de refresh (Shopee muda periodicamente)
+    const refreshEndpoints = [
       'https://seller.shopee.com.br/api/v4/account/token/refresh',
       'https://seller.shopee.com.br/api/v3/account/token/refresh',
-    ]) {
+      'https://seller.shopee.com.br/api/v2/account/token/refresh',
+      'https://seller.shopee.com.br/api/v1/account/token/refresh',
+      'https://seller.shopee.com.br/api/cnsc/account/v1/token/refresh',
+    ];
+    for (const url of refreshEndpoints) {
       try {
         const hdrs = H(cookies, feSession, {
           'Content-Type': 'application/json;charset=UTF-8',
@@ -1944,36 +1957,87 @@ async function refreshCookies(cookies, feSession) {
           ? r.headers['set-cookie']
           : (r.headers['set-cookie'] ? [r.headers['set-cookie']] : []);
         if (r.status === 200 && setCookies.length > 0) {
-          const newCookies = mergeCookies(cookies, setCookies);
-          console.log(`[refresh] ✅ L1 token refresh OK | ${setCookies.length} cookies`);
-          return { ok: true, method: 'refresh_token_l1', cookies: newCookies, new_count: setCookies.length };
+          const newCookies = mergeCookiesSafe(cookies, setCookies);
+          // Só aceita se o novo merge tem SPC_ST válido
+          if (/SPC_ST=[^;]{20,}/.test(newCookies) && /SPC_U=\d/.test(newCookies)) {
+            console.log(`[refresh] ✅ L1 token refresh OK | endpoint=${url.split('/').pop()} | ${setCookies.length} cookies`);
+            return { ok: true, method: 'refresh_token_l1', cookies: newCookies, new_count: setCookies.length };
+          }
         }
-      } catch(e) { errors.push('L1-token: ' + e.message); }
+        if (r.data?.error === 'error_auth' || r.status === 401) {
+          console.log('[refresh] L1 auth error — R_T pode estar invalidado');
+          break;
+        }
+      } catch(e) { errors.push('L1-' + url.split('/').pop() + ': ' + e.message); }
     }
   }
 
-  // ── FALLBACK: basic_info via proxy (verifica se ainda válido) ─
-  console.log('[refresh] tentando fallback basic_info...');
-  const spcCds = getCookie(cookies, 'SPC_CDS');
-  try {
-    const hdrs = H(cookies, feSession, { 'sc-fe-ver': '21.143762' });
-    const r = await proxyReq({ url: `https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${spcCds}&SPC_CDS_VER=2`, method: 'GET', headers: hdrs });
-    const expired = r.data?.errcode === 2 || r.data?.code === 2 || r.status === 401;
-    if (expired) {
-      console.log('[refresh] ❌ sessão expirada confirmada');
-      return { ok: false, expired: true, error: 'Sessão expirada — seller precisa reconectar via extensão Chrome' };
-    }
-    const setCookies = Array.isArray(r.headers['set-cookie'])
-      ? r.headers['set-cookie']
-      : (r.headers['set-cookie'] ? [r.headers['set-cookie']] : []);
-    const newCookies = setCookies.length > 0 ? mergeCookies(cookies, setCookies) : cookies;
-    console.log(`[refresh] ✅ fallback OK | status=${r.status} | ${setCookies.length} cookies novos`);
-    return { ok: true, method: 'basic_info_fallback', cookies: newCookies, new_count: setCookies.length };
-  } catch(e) {
-    errors.push('fallback: ' + e.message);
+  // ── NÍVEL 2: Requisição autenticada "normal" via proxy (força Shopee renovar via R_T) ──
+  // A própria Shopee renova SPC_ST automaticamente se SPC_R_T_ID/IV forem válidos
+  if (spcCds && spcRTId) {
+    console.log('[refresh] Tentando Nível 2 (trigger re-auth via basic_info)...');
+    try {
+      const hdrs = H(cookies, feSession, { 'sc-fe-ver': '21.143762' });
+      const r = await proxyReq({ url: `https://seller.shopee.com.br/api/v1/account/basic_info/?SPC_CDS=${spcCds}&SPC_CDS_VER=2`, method: 'GET', headers: hdrs });
+      const setCookies = Array.isArray(r.headers['set-cookie'])
+        ? r.headers['set-cookie']
+        : (r.headers['set-cookie'] ? [r.headers['set-cookie']] : []);
+      const expired = r.data?.errcode === 2 || r.data?.code === 2 || r.status === 401;
+      if (!expired && setCookies.length > 0) {
+        const newCookies = mergeCookiesSafe(cookies, setCookies);
+        if (/SPC_ST=[^;]{20,}/.test(newCookies)) {
+          console.log(`[refresh] ✅ L2 re-auth OK | loja=${r.data?.data?.shop_name || '?'} | ${setCookies.length} cookies novos`);
+          return { ok: true, method: 'reauth_basic_info_l2', cookies: newCookies, new_count: setCookies.length, shop_name: r.data?.data?.shop_name };
+        }
+      }
+      if (expired) {
+        console.log('[refresh] ❌ sessão expirada (L2)');
+        return { ok: false, expired: true, error: 'Sessão expirada — reconecte via extensão Chrome' };
+      }
+    } catch(e) { errors.push('L2: ' + e.message); }
   }
 
-  return { ok: false, error: 'Todos os métodos falharam: ' + errors.join(' | ') };
+  // ── NÍVEL 3: Browser real BD (fallback quando proxy HTTP falha) ──
+  if (BD_WSS) {
+    try {
+      console.log('[refresh] tentando Nível 3 (browser real BD)...');
+      const r = await refreshWithBrowser(cookies, feSession);
+      if (r.ok) {
+        console.log(`[refresh] ✅ L3 browser OK | ${r.cookies_count} cookies | val=${r.validation}`);
+        return r;
+      }
+      if (r.expired) return r;
+      errors.push('L3-browser: ' + (r.error || 'falhou'));
+    } catch(e) {
+      errors.push('L3-browser: ' + e.message);
+      console.log('[refresh] L3 erro:', e.message);
+    }
+  }
+
+  return { ok: false, error: 'Todos os níveis falharam: ' + errors.join(' | ') };
+}
+
+// Merge seguro de cookies: ignora valores vazios e tokens de formato inválido
+function mergeCookiesSafe(existing, setCookieHeaders) {
+  const jar = {};
+  (existing || '').split(';').forEach(c => {
+    const i = c.indexOf('='); if (i < 0) return;
+    const k = c.slice(0, i).trim(), v = c.slice(i+1).trim();
+    if (k && v) jar[k] = v;
+  });
+  const incoming = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+  incoming.forEach(sc => {
+    const kv = String(sc).split(';')[0].trim();
+    const i = kv.indexOf('='); if (i < 0) return;
+    const k = kv.slice(0,i).trim(), v = kv.slice(i+1).trim();
+    // CRITICAL: não sobrescreve token válido com valor vazio/curto
+    if (!k || ['Path','Domain','Max-Age','Expires','HttpOnly','Secure','SameSite','path','domain','max-age','expires','httponly','secure','samesite'].includes(k)) return;
+    if (!v || v === '""' || v.length < 2) return; // ignora vazios
+    // Pra tokens críticos, só aceita se novo é "válido" (mais longo que placeholder)
+    if (['SPC_ST','SPC_U','SPC_R_T_ID'].includes(k) && v.length < 10) return;
+    jar[k] = v;
+  });
+  return Object.entries(jar).map(([k,v]) => `${k}=${v}`).join('; ');
 }
 
 
