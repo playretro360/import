@@ -2402,6 +2402,109 @@ http.createServer(async (req, res) => {
   }
 
 
+  // ══════════════════════════════════════════════════════════════════
+  // /shopee-pdp-full — Pega produto completo com TODAS variações e preços
+  // Usa residential proxy direto na API pública Shopee
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/shopee-pdp-full') {
+    const d = await readBody();
+    if (!d.itemid || !d.shopid) {
+      res.writeHead(400);
+      return res.end(JSON.stringify({ error: 'itemid e shopid obrigatorios' }));
+    }
+    const errors = [];
+    // Tenta 5 endpoints públicos da Shopee via residential proxy (IP brasileiro real)
+    const apis = [
+      `https://shopee.com.br/api/v4/pdp/get_pc?item_id=${d.itemid}&shop_id=${d.shopid}&tz_offset_minutes=-180&detail_level=0`,
+      `https://shopee.com.br/api/v4/item/get?itemid=${d.itemid}&shopid=${d.shopid}`,
+      `https://shopee.com.br/api/v4/item/get_shop_info?shopid=${d.shopid}`,
+    ];
+    let itemData = null;
+    let modelsData = null;
+    for (const apiUrl of apis) {
+      try {
+        const r = await residentialReq({
+          url: apiUrl,
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Referer': 'https://shopee.com.br/',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'X-Api-Source': 'pc',
+            'X-Shopee-Language': 'pt-BR',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+        if (r.status === 200 && r.data) {
+          // Estrutura varia por endpoint
+          const item = r.data?.data?.item || r.data?.item || r.data?.data || null;
+          if (item && item.name) {
+            itemData = item;
+            modelsData = item.models || item.tier_variations_v2 || null;
+            break;
+          }
+        }
+        errors.push(apiUrl.split('/api/')[1].split('?')[0] + ': status=' + r.status);
+      } catch (e) {
+        errors.push(apiUrl.split('/api/')[1].split('?')[0] + ': ' + e.message);
+      }
+    }
+    // Fallback: pega HTML grande via Unlocker e extrai models embedded
+    if (!itemData) {
+      try {
+        const slug = d.url || `https://shopee.com.br/i.${d.shopid}.${d.itemid}`;
+        const hr = await new Promise((resolveH) => {
+          const body = JSON.stringify({ url: slug, max_len: 800000 });
+          const { protocol: proto, hostname } = new url_mod.URL('https://api.brightdata.com/request');
+          const opts = {
+            hostname, port: 443, path: '/request', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+(process.env.BD_API_TOKEN||'') },
+          };
+          const req_ = https.request(opts, r => {
+            const chunks = [];
+            r.on('data', c => chunks.push(c));
+            r.on('end', () => resolveH(Buffer.concat(chunks).toString('utf8')));
+          });
+          req_.on('error', () => resolveH(''));
+          req_.write(JSON.stringify({ zone: 'unlocker', url: slug, format: 'raw' }));
+          req_.end();
+        });
+        // Parse models[] do HTML
+        const raw = hr || '';
+        const idx = raw.indexOf('"models":[');
+        if (idx > 0) {
+          // Balanced parse
+          let arrStart = raw.indexOf('[', idx);
+          let depth = 0, inStr = false, esc = false, end = arrStart;
+          for (let i = arrStart; i < raw.length; i++) {
+            const c = raw[i];
+            if (esc) { esc = false; continue; }
+            if (inStr) { if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+            if (c === '"') inStr = true;
+            else if (c === '[') depth++;
+            else if (c === ']') { depth--; if (depth === 0) { end = i; break; } }
+          }
+          try {
+            modelsData = JSON.parse(raw.slice(arrStart, end + 1));
+          } catch(e) { errors.push('models parse: ' + e.message); }
+        }
+      } catch(e) { errors.push('html-fallback: ' + e.message); }
+    }
+    if (!itemData && !modelsData) {
+      res.writeHead(404);
+      return res.end(JSON.stringify({ ok: false, error: 'Produto nao encontrado', diagnostic: errors }));
+    }
+    res.writeHead(200);
+    return res.end(JSON.stringify({
+      ok: true,
+      item: itemData,
+      models: modelsData,
+      diagnostic: errors,
+    }));
+  }
+
   if (req.method === 'POST' && p === '/product-detail') {
     const d = await readBody();
     if (!d.itemid || !d.shopid) { res.writeHead(400); return res.end(JSON.stringify({ error: 'itemid e shopid obrigatorios' })); }
