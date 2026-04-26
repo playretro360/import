@@ -2559,9 +2559,10 @@ http.createServer(async (req, res) => {
     if (!d.cookies) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies obrigatorio' })); }
     if (!BD_WSS) { res.writeHead(503); return res.end(JSON.stringify({ ok: false, error: 'BD_WSS nao configurado' })); }
     try {
-      const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/cart/get', null, 'GET');
+      const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/cart/get', {}, 'POST');
       res.writeHead(200);
-      return res.end(JSON.stringify({ ok: r.status === 200, status: r.status, data: r.data, raw: (r.raw||'').slice(0,1500), error: r.error||null }));
+      const isLogin = r.data?.is_login;
+      return res.end(JSON.stringify({ ok: r.status === 200 && isLogin !== false, status: r.status, is_login: isLogin, data: r.data, raw: (r.raw||'').slice(0,1500), error: r.error||null }));
     } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: e.message, stack: (e.stack||'').slice(0,500) })); }
   }
 
