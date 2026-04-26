@@ -2132,8 +2132,6 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
   });
   const cdp = new CDPBrowser(ws);
   try {
-    // FIX: Bright Data Scraping Browser não permite criar target com URL non-blank.
-    // Cria com about:blank e depois navega via Page.navigate.
     const newTarget = await cdp.send('Target.createTarget', {
       url: 'about:blank',
       newWindow: false,
@@ -2155,13 +2153,16 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
       if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
     }
 
-    // Navega para shopee.com.br pra ter contexto de execução
-    await s.send('Page.navigate', { url: 'https://shopee.com.br/' }).catch(()=>{});
-    await new Promise(r => setTimeout(r, 2500));
+    // Navega para /cart pra inicializar o SDK anti-bot da Shopee (gera x-sap-sec automaticamente)
+    await s.send('Page.navigate', { url: 'https://shopee.com.br/cart' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 7000));
 
-    // Constrói o fetch JS dinamicamente
-    const fetchOpts = method === 'GET' ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','Referer':'https://shopee.com.br/'}}`
-      : `{method:'POST',credentials:'include',headers:{'Accept':'application/json','Content-Type':'application/json;charset=UTF-8','x-api-source':'pc','x-csrftoken':document.cookie.match(/CTOKEN=([^;]+)/)?.[1]||document.cookie.match(/csrftoken=([^;]+)/)?.[1]||'','Referer':'https://shopee.com.br/'},body:${JSON.stringify(JSON.stringify(requestBody||{}))}}`;
+    // Constrói o fetch JS com TODOS os headers que o site real envia
+    // Inclui x-shopee-language, x-requested-with que faltavam
+    const csrfFromCookie = '(document.cookie.match(/csrftoken=([^;]+)/)?.[1])||""';
+    const fetchOpts = method === 'GET'
+      ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','Referer':'https://shopee.com.br/cart'}}`
+      : `{method:'POST',credentials:'include',headers:{'Accept':'application/json','Content-Type':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','x-csrftoken':${csrfFromCookie},'Referer':'https://shopee.com.br/cart'},body:${JSON.stringify(JSON.stringify(requestBody||{}))}}`;
 
     const expression = `(async()=>{
       try {
@@ -2182,7 +2183,6 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
     });
     cdp.close();
 
-    // Capturar exception details se houver
     if (result.exceptionDetails) {
       const exc = result.exceptionDetails;
       return { status: 0, data: null, raw: '', error: 'CDP exception: ' + (exc.exception?.description || exc.text || JSON.stringify(exc).slice(0,200)) };
