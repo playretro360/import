@@ -2359,8 +2359,10 @@ http.createServer(async (req, res) => {
 
     res.writeHead(200);
     return res.end(JSON.stringify({
-      ok: true, service: 'vendry-sync', version: '14.30.0-pdp-full',
+      ok: true, service: 'vendry-sync', version: '14.30.1-bd-br',
       proxy: getProxy() ? getProxy().host+':'+getProxy().port : 'none',
+      bd_wss_user: BD_WSS ? (BD_WSS.match(/\/\/([^:]+):/)?.[1] || 'unknown') : 'not set',
+      bd_wss_has_country: BD_WSS ? /-country-[a-z]{2}/.test(BD_WSS) : false,
       residential_proxy: getResidentialProxy() ? getResidentialProxy().host+':'+getResidentialProxy().port : 'not configured',
       unlocker: getUnlockerKey() ? 'configured' : 'not configured',
       endpoints_total: epStats.total,
