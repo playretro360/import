@@ -13,7 +13,26 @@ const url_mod = require('url');
 
 const PORT   = process.env.PORT   || 3000;
 const SECRET = process.env.SYNC_SECRET || 'vendry-sync-2025';
-const BD_WSS = process.env.BD_WSS || '';
+const BD_WSS_RAW = process.env.BD_WSS || '';
+
+// Injeta country-br no username pra forçar IP brasileiro no Scraping Browser
+function buildBdWss(country = 'br') {
+  if (!BD_WSS_RAW) return '';
+  // Username Bright Data: brd-customer-XXX-zone-YYY → adiciona -country-br
+  // Se já tiver -country-, substitui; senão, adiciona antes do :
+  const m = BD_WSS_RAW.match(/^(wss?:\/\/)([^:]+):([^@]+)@(.+)$/);
+  if (!m) return BD_WSS_RAW;
+  const [, proto, user, pass, hostpart] = m;
+  let newUser = user;
+  if (/-country-[a-z]{2}/.test(newUser)) {
+    newUser = newUser.replace(/-country-[a-z]{2}/, '-country-' + country);
+  } else {
+    newUser = newUser + '-country-' + country;
+  }
+  return `${proto}${newUser}:${pass}@${hostpart}`;
+}
+
+const BD_WSS = buildBdWss('br');
 
 function getProxy() {
   const m = (BD_WSS||'').match(/wss?:\/\/([^:]+):([^@]+)@([^:/]+)/);
