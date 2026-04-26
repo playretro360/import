@@ -2132,9 +2132,10 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
   });
   const cdp = new CDPBrowser(ws);
   try {
-    // Cria target já no domínio shopee.com.br pra ter contexto correto
+    // FIX: Bright Data Scraping Browser não permite criar target com URL non-blank.
+    // Cria com about:blank e depois navega via Page.navigate.
     const newTarget = await cdp.send('Target.createTarget', {
-      url: 'https://shopee.com.br/',
+      url: 'about:blank',
       newWindow: false,
       background: true,
     });
@@ -2142,8 +2143,9 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
     const { sessionId: sid2 } = await cdp.send('Target.attachToTarget', { targetId: newTargetId, flatten: true });
     const s = cdp.session(sid2);
     await s.send('Network.enable', {}).catch(()=>{});
+    await s.send('Page.enable', {}).catch(()=>{});
 
-    // Injeta cookies do comprador
+    // Injeta cookies do comprador no domínio shopee.com.br ANTES de navegar
     if (cookies) {
       const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
       const cookieList = cookiePairs.map(cp => {
@@ -2153,8 +2155,9 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
       if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
     }
 
-    // Aguarda contexto inicializar (necessário pra document.cookie pegar CTOKEN)
-    await new Promise(r => setTimeout(r, 1500));
+    // Navega para shopee.com.br pra ter contexto de execução
+    await s.send('Page.navigate', { url: 'https://shopee.com.br/' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 2500));
 
     // Constrói o fetch JS dinamicamente
     const fetchOpts = method === 'GET' ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','Referer':'https://shopee.com.br/'}}`
