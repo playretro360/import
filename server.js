@@ -2116,6 +2116,78 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
 }
 
 
+// ══════════════════════════════════════════════════════════════════════════
+// buyerActionViaBrowser — Faz POST/GET autenticado em endpoint Shopee API
+// usando Browser CDP (browser real via Bright Data Scraping Browser).
+// Bypassa anti-bot, captcha simples e validações de origin.
+// Usado por /buyer-cart-add, /buyer-checkout, /buyer-cart-get.
+// ══════════════════════════════════════════════════════════════════════════
+async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POST') {
+  if (!BD_WSS) throw new Error('BD_WSS nao configurado');
+  const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+    setTimeout(() => reject(new Error('WS timeout')), 20000);
+  });
+  const cdp = new CDPBrowser(ws);
+  try {
+    // Cria target já no domínio shopee.com.br pra ter contexto correto
+    const newTarget = await cdp.send('Target.createTarget', {
+      url: 'https://shopee.com.br/',
+      newWindow: false,
+      background: true,
+    });
+    const newTargetId = newTarget.targetId;
+    const { sessionId: sid2 } = await cdp.send('Target.attachToTarget', { targetId: newTargetId, flatten: true });
+    const s = cdp.session(sid2);
+    await s.send('Network.enable', {}).catch(()=>{});
+
+    // Injeta cookies do comprador
+    if (cookies) {
+      const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
+      const cookieList = cookiePairs.map(cp => {
+        const eq = cp.indexOf('=');
+        return { name: cp.slice(0,eq).trim(), value: cp.slice(eq+1).trim(), domain: '.shopee.com.br', path: '/' };
+      }).filter(c => c.name && c.value);
+      if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
+    }
+
+    // Aguarda contexto inicializar (necessário pra document.cookie pegar CTOKEN)
+    await new Promise(r => setTimeout(r, 1500));
+
+    // Constrói o fetch JS dinamicamente
+    const fetchOpts = method === 'GET' ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','Referer':'https://shopee.com.br/'}}`
+      : `{method:'POST',credentials:'include',headers:{'Accept':'application/json','Content-Type':'application/json;charset=UTF-8','x-api-source':'pc','x-csrftoken':document.cookie.match(/CTOKEN=([^;]+)/)?.[1]||document.cookie.match(/csrftoken=([^;]+)/)?.[1]||'','Referer':'https://shopee.com.br/'},body:${JSON.stringify(JSON.stringify(requestBody||{}))}}`;
+
+    const expression = `(async()=>{
+      try {
+        const r = await fetch(${JSON.stringify(apiUrl)}, ${fetchOpts});
+        const status = r.status;
+        const txt = await r.text();
+        return JSON.stringify({status, body: txt.slice(0, 50000)});
+      } catch(e) {
+        return JSON.stringify({status: 0, body: '', error: e.message});
+      }
+    })()`;
+
+    const result = await s.send('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      timeout: 30000,
+    });
+    cdp.close();
+    const parsed = JSON.parse(result.result?.value || '{}');
+    let data = null;
+    try { data = parsed.body ? JSON.parse(parsed.body) : null; } catch(e) {}
+    return { status: parsed.status, data, raw: parsed.body, error: parsed.error };
+  } catch(e) {
+    try { cdp.close(); } catch(_) {}
+    throw e;
+  }
+}
+
+
 // ── RESIDENTIAL PROXY (para search pública — não bloqueia IP) ─────────────
 function getResidentialProxy() {
   const user = process.env.BD_PROXY_USER || '';
@@ -2399,6 +2471,81 @@ http.createServer(async (req, res) => {
       res.writeHead(500);
       return res.end(JSON.stringify({ error: e.message }));
     }
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════
+  // /buyer-cart-add — Adiciona produto ao carrinho da conta comprador
+  // Usa Bright Data Scraping Browser (BD_WSS) via CDP — bypassa anti-bot Shopee
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/buyer-cart-add') {
+    const d = await readBody();
+    if (!d.cookies || !d.itemid || !d.shopid) {
+      res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies, itemid, shopid obrigatorios' }));
+    }
+    if (!BD_WSS) {
+      res.writeHead(503); return res.end(JSON.stringify({ ok: false, error: 'BD_WSS nao configurado — Scraping Browser indispensavel' }));
+    }
+    try {
+      const body = {
+        add_to_cart_list: [{
+          itemid: parseInt(d.itemid),
+          shopid: parseInt(d.shopid),
+          quantity: d.quantity || 1,
+          modelid: parseInt(d.modelid || 0),
+          source: 'pdp_normal',
+        }]
+      };
+      const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/cart/add_to_cart_v2', body);
+      res.writeHead(r.status === 200 ? 200 : 503);
+      return res.end(JSON.stringify({ ok: r.status === 200 && (r.data?.error === 0 || !r.data?.error), status: r.status, data: r.data, raw: (r.raw||'').slice(0, 5000) }));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // /buyer-checkout — Faz checkout (place order) da conta comprador
+  // Usa Bright Data Scraping Browser (BD_WSS) via CDP
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/buyer-checkout') {
+    const d = await readBody();
+    if (!d.cookies || !d.shoporders) {
+      res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies e shoporders obrigatorios' }));
+    }
+    if (!BD_WSS) {
+      res.writeHead(503); return res.end(JSON.stringify({ ok: false, error: 'BD_WSS nao configurado — Scraping Browser indispensavel' }));
+    }
+    try {
+      const body = {
+        shoporders: d.shoporders,
+        selected_payment_channel_data: d.payment || { payment_type: 2, version: 2 },
+        address_id: d.address_id || 0,
+        promotion_data: d.promotion_data || { use_coins: false, free_shipping_voucher_info: { free_shipping_voucher_id: 0 } },
+      };
+      const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/order/checkout_place_order_v2', body);
+      res.writeHead(r.status === 200 ? 200 : 503);
+      const orderSn = r.data?.order_list?.[0]?.orderid || r.data?.checkout_order_sn || '';
+      return res.end(JSON.stringify({ ok: r.status === 200 && (r.data?.error === 0 || !r.data?.error), status: r.status, order_sn: String(orderSn), data: r.data, raw: (r.raw||'').slice(0, 5000) }));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ ok: false, error: e.message }));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // /buyer-cart-get — Lista carrinho atual da conta comprador (debug)
+  // ══════════════════════════════════════════════════════════════════
+  if (req.method === 'POST' && p === '/buyer-cart-get') {
+    const d = await readBody();
+    if (!d.cookies) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies obrigatorio' })); }
+    if (!BD_WSS) { res.writeHead(503); return res.end(JSON.stringify({ ok: false, error: 'BD_WSS nao configurado' })); }
+    try {
+      const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/cart/get', null, 'GET');
+      res.writeHead(200);
+      return res.end(JSON.stringify({ ok: r.status === 200, status: r.status, data: r.data }));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: e.message })); }
   }
 
 
