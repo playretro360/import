@@ -2124,6 +2124,9 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
 // ══════════════════════════════════════════════════════════════════════════
 async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POST') {
   if (!BD_WSS) throw new Error('BD_WSS nao configurado');
+  // Extrai csrftoken do cookies string ANTES de mandar pro browser
+  const csrfMatch = (cookies||'').match(/csrftoken=([^;]+)/);
+  const csrftoken = csrfMatch ? csrfMatch[1].trim() : '';
   const ws = new WebSocket(BD_WSS, { handshakeTimeout: 20000 });
   await new Promise((resolve, reject) => {
     ws.once('open', resolve);
@@ -2143,7 +2146,6 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
     await s.send('Network.enable', {}).catch(()=>{});
     await s.send('Page.enable', {}).catch(()=>{});
 
-    // Injeta cookies do comprador no domínio shopee.com.br ANTES de navegar
     if (cookies) {
       const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
       const cookieList = cookiePairs.map(cp => {
@@ -2153,16 +2155,14 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
       if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
     }
 
-    // Navega para /cart pra inicializar o SDK anti-bot da Shopee (gera x-sap-sec automaticamente)
-    await s.send('Page.navigate', { url: 'https://shopee.com.br/cart' }).catch(()=>{});
-    await new Promise(r => setTimeout(r, 7000));
+    // Navega pra raiz (mais leve, não redireciona)
+    await s.send('Page.navigate', { url: 'https://shopee.com.br/' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 5000));
 
-    // Constrói o fetch JS com TODOS os headers que o site real envia
-    // Inclui x-shopee-language, x-requested-with que faltavam
-    const csrfFromCookie = '(document.cookie.match(/csrftoken=([^;]+)/)?.[1])||""';
+    // Headers completos como na request real do user (csrftoken pré-extraído pra evitar Access Denied)
     const fetchOpts = method === 'GET'
-      ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','Referer':'https://shopee.com.br/cart'}}`
-      : `{method:'POST',credentials:'include',headers:{'Accept':'application/json','Content-Type':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','x-csrftoken':${csrfFromCookie},'Referer':'https://shopee.com.br/cart'},body:${JSON.stringify(JSON.stringify(requestBody||{}))}}`;
+      ? `{credentials:'include',headers:{'Accept':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','Referer':'https://shopee.com.br/'}}`
+      : `{method:'POST',credentials:'include',headers:{'Accept':'application/json','Content-Type':'application/json','x-api-source':'pc','x-shopee-language':'pt-BR','x-requested-with':'XMLHttpRequest','x-csrftoken':${JSON.stringify(csrftoken)},'Referer':'https://shopee.com.br/'},body:${JSON.stringify(JSON.stringify(requestBody||{}))}}`;
 
     const expression = `(async()=>{
       try {
