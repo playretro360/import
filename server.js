@@ -2175,9 +2175,23 @@ async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POS
       expression,
       awaitPromise: true,
       timeout: 30000,
+      returnByValue: true,
     });
     cdp.close();
-    const parsed = JSON.parse(result.result?.value || '{}');
+
+    // Capturar exception details se houver
+    if (result.exceptionDetails) {
+      const exc = result.exceptionDetails;
+      return { status: 0, data: null, raw: '', error: 'CDP exception: ' + (exc.exception?.description || exc.text || JSON.stringify(exc).slice(0,200)) };
+    }
+
+    const value = result.result?.value;
+    if (!value) {
+      return { status: 0, data: null, raw: '', error: 'CDP retornou sem value. type=' + (result.result?.type||'?') + ' subtype=' + (result.result?.subtype||'?') };
+    }
+
+    let parsed;
+    try { parsed = typeof value === 'string' ? JSON.parse(value) : value; } catch(e) { parsed = { status: 0, body: '', error: 'parse value falhou: ' + e.message }; }
     let data = null;
     try { data = parsed.body ? JSON.parse(parsed.body) : null; } catch(e) {}
     return { status: parsed.status, data, raw: parsed.body, error: parsed.error };
@@ -2544,8 +2558,8 @@ http.createServer(async (req, res) => {
     try {
       const r = await buyerActionViaBrowser(d.cookies, 'https://shopee.com.br/api/v4/cart/get', null, 'GET');
       res.writeHead(200);
-      return res.end(JSON.stringify({ ok: r.status === 200, status: r.status, data: r.data }));
-    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: e.message })); }
+      return res.end(JSON.stringify({ ok: r.status === 200, status: r.status, data: r.data, raw: (r.raw||'').slice(0,1500), error: r.error||null }));
+    } catch(e) { res.writeHead(500); return res.end(JSON.stringify({ ok: false, error: e.message, stack: (e.stack||'').slice(0,500) })); }
   }
 
 
