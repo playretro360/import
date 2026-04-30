@@ -2141,6 +2141,133 @@ async function searchViaBrowser(shopid, limit, offset, cookies) {
 // Bypassa anti-bot, captcha simples e validações de origin.
 // Usado por /buyer-cart-add, /buyer-checkout, /buyer-cart-get.
 // ══════════════════════════════════════════════════════════════════════════
+// Descoberta de warranty_time válidos via Scraping Browser (Chrome real)
+// Navega pra /portal/product/new, espera renderizar, intercepta requests + extrai dropdown
+async function discoverWarrantyOptionsViaBrowser(cookies, categoryId = 100006) {
+  if (!BD_WSS) throw new Error('BD_WSS nao configurado');
+  const ws = new WebSocket(BD_WSS, { handshakeTimeout: 30000 });
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+    setTimeout(() => reject(new Error('WS timeout')), 30000);
+  });
+  const cdp = new CDPBrowser(ws);
+  try {
+    const newTarget = await cdp.send('Target.createTarget', {
+      url: 'about:blank',
+      newWindow: false,
+      background: true,
+    });
+    const targetId = newTarget.targetId;
+    const { sessionId: sid } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    const s = cdp.session(sid);
+    await s.send('Network.enable', {}).catch(()=>{});
+    await s.send('Page.enable', {}).catch(()=>{});
+    await s.send('Runtime.enable', {}).catch(()=>{});
+
+    // Setar cookies seller.shopee.com.br
+    if (cookies) {
+      const cookiePairs = cookies.split(';').map(c => c.trim()).filter(Boolean);
+      const cookieList = cookiePairs.flatMap(cp => {
+        const eq = cp.indexOf('=');
+        if (eq < 0) return [];
+        const name = cp.slice(0,eq).trim();
+        const value = cp.slice(eq+1).trim();
+        if (!name || !value) return [];
+        return [
+          { name, value, domain: '.shopee.com.br', path: '/' },
+          { name, value, domain: 'seller.shopee.com.br', path: '/' },
+        ];
+      });
+      if (cookieList.length > 0) await s.send('Network.setCookies', { cookies: cookieList }).catch(()=>{});
+    }
+
+    // Capturar TODAS as XHR requests da Shopee durante o render
+    const capturedRequests = [];
+    const capturedResponses = {};
+    cdp.on('event', ev => {
+      if (ev.method === 'Network.requestWillBeSent') {
+        const req = ev.params.request;
+        if (req.url.includes('seller.shopee.com.br/api/')) {
+          capturedRequests.push({
+            id: ev.params.requestId,
+            url: req.url,
+            method: req.method,
+            postData: req.postData,
+          });
+        }
+      }
+      if (ev.method === 'Network.responseReceived') {
+        const r = ev.params.response;
+        if (r.url.includes('seller.shopee.com.br/api/')) {
+          capturedResponses[ev.params.requestId] = { status: r.status, url: r.url };
+        }
+      }
+    });
+
+    // Navega pra página de criar produto
+    const navUrl = `https://seller.shopee.com.br/portal/product/new/0/${categoryId}`;
+    await s.send('Page.navigate', { url: navUrl }).catch(()=>{});
+
+    // Espera 12s pra a SPA renderizar (Vue3 + Webpack chunks lazy)
+    await new Promise(r => setTimeout(r, 12000));
+
+    // Tenta extrair informações do form/state Vue:
+    // 1. Procurar select/dropdown de "Garantia" (warranty)  
+    // 2. Inspecionar window.__INITIAL_STATE__ ou variáveis globais
+    // 3. Buscar respostas XHR já capturadas
+    const expression = `(async()=>{
+      const out = { url: location.href, title: document.title };
+      // 1. Procurar dropdowns/selects que contenham "warranty" ou "garantia"
+      const selects = Array.from(document.querySelectorAll('select, [role="listbox"], [role="combobox"]'));
+      out.selects = selects.map(s=>({
+        text: (s.outerHTML||'').slice(0,300),
+        options: Array.from(s.querySelectorAll('option,[role="option"]')).map(o=>({val:o.value,txt:o.textContent}))
+      })).filter(x=>x.text.toLowerCase().includes('warrant')||x.text.toLowerCase().includes('garan'));
+      // 2. Pegar window.__APP_DATA__, __INITIAL_STATE__ etc
+      try { out.appData = window.__APP_DATA__ ? JSON.stringify(window.__APP_DATA__).slice(0,5000) : null; } catch(e){}
+      try { out.initState = window.__INITIAL_STATE__ ? JSON.stringify(window.__INITIAL_STATE__).slice(0,5000) : null; } catch(e){}
+      // 3. Procurar texto warranty no body
+      const bodyText = (document.body?.innerText||'').slice(0,2000);
+      out.bodyHasWarranty = bodyText.toLowerCase().includes('garan') || bodyText.toLowerCase().includes('warrant');
+      out.bodyPreview = bodyText.slice(0,500);
+      // 4. Procurar todos os JSONs da página (data attributes, scripts inline)
+      const scripts = Array.from(document.querySelectorAll('script:not([src])'));
+      out.inlineScripts = scripts.map(s=>{
+        const txt = s.textContent||'';
+        if (txt.includes('warranty') || txt.includes('Warranty') || txt.includes('garantia')) {
+          return txt.slice(0, 5000);
+        }
+        return null;
+      }).filter(Boolean);
+      return JSON.stringify(out);
+    })()`;
+
+    const result = await s.send('Runtime.evaluate', {
+      expression,
+      awaitPromise: true,
+      timeout: 30000,
+      returnByValue: true,
+    });
+
+    let pageData = {};
+    try { pageData = JSON.parse(result.result?.value || '{}'); } catch(e) {}
+
+    cdp.close();
+
+    return {
+      ok: true,
+      page: pageData,
+      capturedRequests: capturedRequests.slice(0, 50),
+      capturedResponses,
+    };
+  } catch(e) {
+    try { cdp.close(); } catch(_) {}
+    throw e;
+  }
+}
+
+
 async function buyerActionViaBrowser(cookies, apiUrl, requestBody, method = 'POST') {
   if (!BD_WSS) throw new Error('BD_WSS nao configurado');
   // Extrai csrftoken do cookies string ANTES de mandar pro browser
@@ -2302,15 +2429,15 @@ function unlockerReq(targetUrl, zone, opts2) {
     const key = getUnlockerKey();
     if (!key) return reject(new Error('BD_UNLOCKER_KEY nao configurado'));
     const o2 = opts2 || {};
-    // Headers: combina headers passados + cookie
-    const hdrsArr = [];
+    // Headers: objeto plain {name: value}
+    const hdrsObj = {};
     if (o2.headers) {
       for (const [k, v] of Object.entries(o2.headers)) {
-        hdrsArr.push({ name: String(k).toLowerCase(), value: String(v) });
+        hdrsObj[String(k).toLowerCase()] = String(v);
       }
     }
-    if (o2.cookies && !hdrsArr.find(h=>h.name==='cookie')) {
-      hdrsArr.push({ name: 'cookie', value: String(o2.cookies) });
+    if (o2.cookies && !hdrsObj['cookie']) {
+      hdrsObj['cookie'] = String(o2.cookies);
     }
     const reqBody = {
       zone: zone || 'web_unlocker1',
@@ -2319,7 +2446,7 @@ function unlockerReq(targetUrl, zone, opts2) {
       method: (o2.method || 'GET').toUpperCase(),
     };
     if (o2.body) reqBody.data = typeof o2.body === 'string' ? o2.body : JSON.stringify(o2.body);
-    if (hdrsArr.length) reqBody.headers = hdrsArr;
+    if (Object.keys(hdrsObj).length) reqBody.headers = hdrsObj;
     const body = JSON.stringify(reqBody);
     const opts = {
       hostname: 'api.brightdata.com',
@@ -2563,6 +2690,22 @@ http.createServer(async (req, res) => {
   // /buyer-cart-add — Adiciona produto ao carrinho da conta comprador
   // Usa Bright Data Scraping Browser (BD_WSS) via CDP — bypassa anti-bot Shopee
   // ══════════════════════════════════════════════════════════════════
+  // /discover-warranty — abre Chrome real, navega pra /portal/product/new
+  // e captura TODAS as XHRs Shopee + DOM com warranty options
+  // Uso: { cookies: "...", category_id: 100006 }
+  if (req.method === 'POST' && p === '/discover-warranty') {
+    const d = await readBody();
+    if (!d.cookies) { res.writeHead(400); return res.end(JSON.stringify({ error: 'cookies obrigatorio' })); }
+    try {
+      const r = await discoverWarrantyOptionsViaBrowser(d.cookies, d.category_id || 100006);
+      res.writeHead(200);
+      return res.end(JSON.stringify(r));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ error: e.message, stack: (e.stack||'').slice(0,500) }));
+    }
+  }
+
   if (req.method === 'POST' && p === '/buyer-cart-add') {
     const d = await readBody();
     if (!d.cookies || !d.itemid || !d.shopid) {
