@@ -2296,15 +2296,31 @@ function getUnlockerKey() {
   return process.env.BD_UNLOCKER_KEY || '';
 }
 
-function unlockerReq(targetUrl, zone) {
+function unlockerReq(targetUrl, zone, opts2) {
+  // opts2: { method, headers, body, cookies }
   return new Promise((resolve, reject) => {
     const key = getUnlockerKey();
     if (!key) return reject(new Error('BD_UNLOCKER_KEY nao configurado'));
-    const body = JSON.stringify({
+    const o2 = opts2 || {};
+    // Headers: combina headers passados + cookie
+    const hdrsArr = [];
+    if (o2.headers) {
+      for (const [k, v] of Object.entries(o2.headers)) {
+        hdrsArr.push({ name: String(k).toLowerCase(), value: String(v) });
+      }
+    }
+    if (o2.cookies && !hdrsArr.find(h=>h.name==='cookie')) {
+      hdrsArr.push({ name: 'cookie', value: String(o2.cookies) });
+    }
+    const reqBody = {
       zone: zone || 'web_unlocker1',
       url: targetUrl,
       format: 'raw',
-    });
+      method: (o2.method || 'GET').toUpperCase(),
+    };
+    if (o2.body) reqBody.data = typeof o2.body === 'string' ? o2.body : JSON.stringify(o2.body);
+    if (hdrsArr.length) reqBody.headers = hdrsArr;
+    const body = JSON.stringify(reqBody);
     const opts = {
       hostname: 'api.brightdata.com',
       port: 443,
@@ -2317,7 +2333,7 @@ function unlockerReq(targetUrl, zone) {
       },
     };
     const r = https.request(opts);
-    r.setTimeout(25000);
+    r.setTimeout(45000);
     r.on('error', reject);
     r.on('timeout', () => { r.destroy(); reject(new Error('Unlocker timeout')); });
     r.on('response', resp => {
@@ -2332,6 +2348,16 @@ function unlockerReq(targetUrl, zone) {
     });
     r.write(body);
     r.end();
+  });
+}
+
+// Endpoint debug: chama Shopee create_product via Web Unlocker (browser real)
+function unlockerProxyFor(d) {
+  return unlockerReq(d.url, d.zone, {
+    method: d.method,
+    headers: d.headers,
+    body: d.body,
+    cookies: d.cookies,
   });
 }
 
@@ -2505,6 +2531,27 @@ http.createServer(async (req, res) => {
       const proxyResp = await proxyFn({ url: d.url, method: d.method||'GET', headers: hdrs }, d.body||undefined);
       res.writeHead(proxyResp.status);
       return res.end(JSON.stringify({ status: proxyResp.status, data: proxyResp.data, raw: proxyResp.raw?.slice(0, d.max_len || 2000) }));
+    } catch(e) {
+      res.writeHead(500);
+      return res.end(JSON.stringify({ error: e.message }));
+    }
+  }
+
+  // /unlocker-call — chama Shopee via Web Unlocker COM cookies/body/headers
+  // Aceita: { url, method, headers, body, cookies, max_len }
+  if (req.method === 'POST' && p === '/unlocker-call') {
+    const d = await readBody();
+    if (!d.url) { res.writeHead(400); return res.end(JSON.stringify({ error: 'url obrigatorio' })); }
+    if (!getUnlockerKey()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'BD_UNLOCKER_KEY nao configurado' })); }
+    try {
+      const r = await unlockerReq(d.url, d.zone, {
+        method: d.method || 'GET',
+        headers: d.headers || {},
+        body: d.body,
+        cookies: d.cookies,
+      });
+      res.writeHead(200);
+      return res.end(JSON.stringify({ status: r.status, raw: (r.raw||'').slice(0, d.max_len||10000) }));
     } catch(e) {
       res.writeHead(500);
       return res.end(JSON.stringify({ error: e.message }));
