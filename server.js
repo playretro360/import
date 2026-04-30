@@ -2445,7 +2445,7 @@ function unlockerReq(targetUrl, zone, opts2) {
       format: 'raw',
       method: (o2.method || 'GET').toUpperCase(),
     };
-    if (o2.body) reqBody.data = typeof o2.body === 'string' ? o2.body : JSON.stringify(o2.body);
+    if (o2.body) reqBody.body = typeof o2.body === 'string' ? o2.body : JSON.stringify(o2.body);
     if (Object.keys(hdrsObj).length) reqBody.headers = hdrsObj;
     const body = JSON.stringify(reqBody);
     const opts = {
