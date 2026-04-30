@@ -2212,7 +2212,11 @@ async function discoverWarrantyOptionsViaBrowser(cookies, categoryId = 100006) {
     };
     ws.on('message', evListener);
 
-    // Navega pra página de criar produto
+    // PASSO 1: Navega pra homepage seller logado (faz cookies fluírem)
+    await s.send('Page.navigate', { url: 'https://seller.shopee.com.br/portal/sale/order?type=shipping' }).catch(()=>{});
+    await new Promise(r => setTimeout(r, 8000));
+
+    // PASSO 2: Agora navega pra página de criar produto
     const navUrl = `https://seller.shopee.com.br/portal/product/new/0/${categoryId}`;
     await s.send('Page.navigate', { url: navUrl }).catch(()=>{});
 
