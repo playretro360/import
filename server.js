@@ -2185,68 +2185,139 @@ async function discoverWarrantyOptionsViaBrowser(cookies, categoryId = 100006) {
     // Capturar TODAS as XHR requests da Shopee durante o render
     const capturedRequests = [];
     const capturedResponses = {};
-    cdp.on('event', ev => {
-      if (ev.method === 'Network.requestWillBeSent') {
-        const req = ev.params.request;
-        if (req.url.includes('seller.shopee.com.br/api/')) {
-          capturedRequests.push({
-            id: ev.params.requestId,
-            url: req.url,
-            method: req.method,
-            postData: req.postData,
-          });
+    const responseBodies = {};
+    // Anexa listener direto no WebSocket (CDPBrowser não expõe .on)
+    const evListener = (rawData) => {
+      try {
+        const ev = JSON.parse(rawData.toString());
+        if (!ev.method) return;
+        if (ev.method === 'Network.requestWillBeSent') {
+          const req = ev.params.request;
+          if (req.url.includes('seller.shopee.com.br/api/')) {
+            capturedRequests.push({
+              id: ev.params.requestId,
+              url: req.url,
+              method: req.method,
+              postData: req.postData,
+            });
+          }
         }
-      }
-      if (ev.method === 'Network.responseReceived') {
-        const r = ev.params.response;
-        if (r.url.includes('seller.shopee.com.br/api/')) {
-          capturedResponses[ev.params.requestId] = { status: r.status, url: r.url };
+        if (ev.method === 'Network.responseReceived') {
+          const r = ev.params.response;
+          if (r.url.includes('seller.shopee.com.br/api/')) {
+            capturedResponses[ev.params.requestId] = { status: r.status, url: r.url };
+          }
         }
-      }
-    });
+      } catch(e) {}
+    };
+    ws.on('message', evListener);
 
     // Navega pra página de criar produto
     const navUrl = `https://seller.shopee.com.br/portal/product/new/0/${categoryId}`;
     await s.send('Page.navigate', { url: navUrl }).catch(()=>{});
 
-    // Espera 12s pra a SPA renderizar (Vue3 + Webpack chunks lazy)
-    await new Promise(r => setTimeout(r, 12000));
+    // Espera 15s pra a SPA renderizar (Vue3 + Webpack chunks lazy)
+    await new Promise(r => setTimeout(r, 15000));
 
-    // Tenta extrair informações do form/state Vue:
-    // 1. Procurar select/dropdown de "Garantia" (warranty)  
-    // 2. Inspecionar window.__INITIAL_STATE__ ou variáveis globais
-    // 3. Buscar respostas XHR já capturadas
+    // Pega as response bodies dos endpoints de warranty/policy/dict
+    for (const reqInfo of capturedRequests) {
+      if (/warrant|complaint|policy|dict|init|category_recommend/i.test(reqInfo.url)) {
+        try {
+          const body = await s.send('Network.getResponseBody', { requestId: reqInfo.id });
+          responseBodies[reqInfo.url] = (body.body || '').slice(0, 8000);
+        } catch(e) {}
+      }
+    }
+
+    // Expression: tenta CLICAR no select de Garantia/Reclamação pra forçar o dropdown abrir
+    // e procurar warranty options no DOM + Vue components
     const expression = `(async()=>{
       const out = { url: location.href, title: document.title };
-      // 1. Procurar dropdowns/selects que contenham "warranty" ou "garantia"
-      const selects = Array.from(document.querySelectorAll('select, [role="listbox"], [role="combobox"]'));
-      out.selects = selects.map(s=>({
-        text: (s.outerHTML||'').slice(0,300),
-        options: Array.from(s.querySelectorAll('option,[role="option"]')).map(o=>({val:o.value,txt:o.textContent}))
-      })).filter(x=>x.text.toLowerCase().includes('warrant')||x.text.toLowerCase().includes('garan'));
-      // 2. Pegar window.__APP_DATA__, __INITIAL_STATE__ etc
-      try { out.appData = window.__APP_DATA__ ? JSON.stringify(window.__APP_DATA__).slice(0,5000) : null; } catch(e){}
-      try { out.initState = window.__INITIAL_STATE__ ? JSON.stringify(window.__INITIAL_STATE__).slice(0,5000) : null; } catch(e){}
-      // 3. Procurar texto warranty no body
-      const bodyText = (document.body?.innerText||'').slice(0,2000);
-      out.bodyHasWarranty = bodyText.toLowerCase().includes('garan') || bodyText.toLowerCase().includes('warrant');
-      out.bodyPreview = bodyText.slice(0,500);
-      // 4. Procurar todos os JSONs da página (data attributes, scripts inline)
-      const scripts = Array.from(document.querySelectorAll('script:not([src])'));
-      out.inlineScripts = scripts.map(s=>{
-        const txt = s.textContent||'';
-        if (txt.includes('warranty') || txt.includes('Warranty') || txt.includes('garantia')) {
-          return txt.slice(0, 5000);
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+      // 1. Procurar texto "Garantia" / "Reclamação" no DOM e clicar no input próximo
+      function findByText(re) {
+        const all = document.querySelectorAll('label, span, div, p, h1, h2, h3, h4');
+        for (const el of all) {
+          const t = (el.textContent||'').trim();
+          if (re.test(t) && t.length < 100) return el;
         }
         return null;
-      }).filter(Boolean);
+      }
+      const garLabel = findByText(/garantia/i) || findByText(/reclama/i) || findByText(/warranty/i);
+      out.foundGarLabel = !!garLabel;
+      if (garLabel) {
+        out.garLabelText = garLabel.textContent.trim().slice(0,80);
+        // Procurar input/select próximo (mesmo container)
+        let container = garLabel.closest('.eds-form-item, .form-item, [class*="item"]') || garLabel.parentElement;
+        for (let i=0; i<3 && container; i++) {
+          const input = container.querySelector('input, [role="combobox"], [class*="select"]');
+          if (input) {
+            input.click();
+            await sleep(800);
+            break;
+          }
+          container = container.parentElement;
+        }
+        await sleep(1000);
+        // Capturar todos os items do dropdown agora aberto
+        const dropdowns = document.querySelectorAll('[class*="dropdown"][class*="visible"], [class*="popper"]:not([style*="display: none"]), .eds-dropdown-menu, [role="listbox"]');
+        out.dropdownsCount = dropdowns.length;
+        out.dropdownItems = [];
+        for (const dd of dropdowns) {
+          const items = dd.querySelectorAll('[class*="option"], [role="option"], li, .item');
+          for (const it of items) {
+            const txt = (it.textContent||'').trim();
+            if (txt && txt.length<200) {
+              out.dropdownItems.push({
+                text: txt,
+                value: it.getAttribute('data-value') || it.getAttribute('value') || it.dataset?.value || '',
+                attrs: Array.from(it.attributes||[]).map(a=>({n:a.name,v:String(a.value).slice(0,100)})).slice(0,5)
+              });
+            }
+          }
+        }
+      }
+
+      // 2. Inspecionar window globals + Vue state
+      try { out.appData = window.__APP_DATA__ ? JSON.stringify(window.__APP_DATA__).slice(0,3000) : null; } catch(e){}
+      try { out.initState = window.__INITIAL_STATE__ ? JSON.stringify(window.__INITIAL_STATE__).slice(0,3000) : null; } catch(e){}
+      try { out.shopeeData = window.__SHOPEE__ ? JSON.stringify(window.__SHOPEE__).slice(0,3000) : null; } catch(e){}
+
+      // 3. Procurar 'warranty_time' em TODA window
+      const warrantyHints = [];
+      try {
+        const seen = new WeakSet();
+        function walk(o, depth=0, path='') {
+          if (!o || depth>4 || seen.has(o)) return;
+          if (typeof o !== 'object') return;
+          seen.add(o);
+          for (const k in o) {
+            try {
+              const v = o[k];
+              if (k.toLowerCase().includes('warrant') || (typeof v === 'string' && v.toLowerCase().includes('warrant'))) {
+                warrantyHints.push({ path: path+'.'+k, value: JSON.stringify(v).slice(0,500) });
+              }
+              if (typeof v === 'object') walk(v, depth+1, path+'.'+k);
+            } catch(e) {}
+          }
+        }
+        if (warrantyHints.length<20) walk(window, 0, 'window');
+      } catch(e) {}
+      out.warrantyHints = warrantyHints.slice(0, 30);
+
+      // 4. Body text + dump scripts inline
+      const bodyText = (document.body?.innerText||'').slice(0,3000);
+      out.bodyHasWarranty = /garan|warrant/i.test(bodyText);
+      out.bodyPreview = bodyText.slice(0,1000);
+
       return JSON.stringify(out);
     })()`;
 
     const result = await s.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,
-      timeout: 30000,
+      timeout: 45000,
       returnByValue: true,
     });
 
@@ -2258,8 +2329,9 @@ async function discoverWarrantyOptionsViaBrowser(cookies, categoryId = 100006) {
     return {
       ok: true,
       page: pageData,
-      capturedRequests: capturedRequests.slice(0, 50),
+      capturedRequests: capturedRequests.slice(0, 80).map(r => ({ url: r.url, method: r.method, postData: (r.postData||'').slice(0,500) })),
       capturedResponses,
+      responseBodies,
     };
   } catch(e) {
     try { cdp.close(); } catch(_) {}
