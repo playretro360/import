@@ -2445,6 +2445,7 @@ function unlockerReq(targetUrl, zone, opts2) {
       format: 'raw',
       method: (o2.method || 'GET').toUpperCase(),
     };
+    if (o2.render_js) reqBody.render_js = true;
     if (o2.body) reqBody.body = typeof o2.body === 'string' ? o2.body : JSON.stringify(o2.body);
     if (Object.keys(hdrsObj).length) reqBody.headers = hdrsObj;
     const body = JSON.stringify(reqBody);
@@ -2676,6 +2677,7 @@ http.createServer(async (req, res) => {
         headers: d.headers || {},
         body: d.body,
         cookies: d.cookies,
+        render_js: !!d.render_js,
       });
       res.writeHead(200);
       return res.end(JSON.stringify({ status: r.status, raw: (r.raw||'').slice(0, d.max_len||10000) }));
